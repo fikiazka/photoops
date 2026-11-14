@@ -275,3 +275,48 @@ function lapor_insiden(int $unit_id, ?int $proyek_id, string $jenis, string $des
     catat_riwayat('Insiden', label_unit($unit), $kode . ' · ' . $deskripsi, $unit['kondisi'] ?? '', $kondisi_baru);
     return $kode;
 }
+
+function daftar_barang_eksternal(): array
+{
+    $diperiksa = [];
+    $hasil = [];
+    foreach (db('alokasi') as $alokasi) {
+        if ($alokasi['sumber'] === 'Studio') {
+            continue;
+        }
+        $pid = (int) $alokasi['proyek_id'];
+        $diperiksa[$pid] = $diperiksa[$pid] ?? id_diperiksa($pid);
+        $proyek = db_cari('proyek', $pid);
+        $hasil[] = [
+            'alokasi' => $alokasi,
+            'proyek' => $proyek,
+            'kebutuhan' => db_cari('kebutuhan', (int) $alokasi['kebutuhan_id']),
+            'jumlah' => jumlah_alokasi($alokasi),
+            'asal' => $alokasi['sumber'] === 'Rental' ? $alokasi['vendor'] : nama_pengguna($alokasi['pemilik_id']),
+            'diperiksa' => alokasi_diperiksa($alokasi, $diperiksa[$pid]),
+            'diperiksa_aktif' => alokasi_siap($alokasi, $diperiksa[$pid]),
+            'proyek_aktif' => $proyek && proyek_aktif($proyek),
+        ];
+    }
+    usort($hasil, fn ($a, $b) => [$a['alokasi']['status'] === 'Dibatalkan', !$a['proyek_aktif'], $a['alokasi']['tgl_mulai'], $a['alokasi']['id']]
+        <=> [$b['alokasi']['status'] === 'Dibatalkan', !$b['proyek_aktif'], $b['alokasi']['tgl_mulai'], $b['alokasi']['id']]);
+    return $hasil;
+}
+
+function ringkasan_eksternal(array $daftar): array
+{
+    $hasil = ['alokasi_aktif' => 0, 'unit_rental' => 0, 'unit_kru' => 0, 'direncanakan' => 0, 'unit_direncanakan' => 0];
+    foreach ($daftar as $baris) {
+        $status = $baris['alokasi']['status'];
+        if ($status === 'Dibatalkan') {
+            continue;
+        }
+        $hasil['alokasi_aktif']++;
+        $hasil[$baris['alokasi']['sumber'] === 'Rental' ? 'unit_rental' : 'unit_kru'] += $baris['jumlah'];
+        if ($status === 'Direncanakan') {
+            $hasil['direncanakan']++;
+            $hasil['unit_direncanakan'] += $baris['jumlah'];
+        }
+    }
+    return $hasil;
+}
