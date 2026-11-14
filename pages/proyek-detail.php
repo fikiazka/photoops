@@ -268,6 +268,8 @@ if (is_post()) {
             flash('sukses', $nama . ' dikonfirmasi. Centang di Persiapan setelah barang diperiksa.');
         } elseif ($aksi === 'batalkan_alokasi' && $a['status'] === 'Dibatalkan') {
             flash('error', 'Alokasi ' . $nama . ' sudah dibatalkan sebelumnya.');
+        } elseif (rental_punya_catatan_vendor($a)) {
+            flash('error', $nama . ' sudah tercatat diterima dari vendor. Alokasinya dikunci; selesaikan lewat Perlengkapan › Barang eksternal.');
         } elseif ($aksi === 'batalkan_alokasi') {
             db_ubah('alokasi', $a['id'], ['status' => 'Dibatalkan']);
             catat_riwayat('Alokasi', $nama . ' · ' . $proyek['kode'], 'Alokasi dibatalkan', $a['status'], 'Dibatalkan');
@@ -284,9 +286,14 @@ if (is_post()) {
     if ($aksi === 'simpan_persiapan') {
         wajib_boleh('persiapan.kelola');
         wajib_proyek_aktif($proyek);
-        $boleh_periksa = array_map(fn ($a) => (int) $a['id'], array_filter(alokasi_proyek($pid, true), fn ($a) => $a['status'] === 'Dikonfirmasi'));
-        $pilih = array_values(array_intersect(array_map('intval', input_daftar('diperiksa')), $boleh_periksa));
+        $aktif_p = alokasi_proyek($pid, true);
+        $boleh_periksa = array_map(fn ($a) => (int) $a['id'], array_filter($aktif_p, 'alokasi_bisa_diperiksa'));
+        $belum_bisa = array_map(fn ($a) => (int) $a['id'], array_filter($aktif_p, fn ($a) => !alokasi_bisa_diperiksa($a)));
         $rekam = ambil_persiapan($pid);
+        $pilih = array_values(array_unique(array_merge(
+            array_intersect(array_map('intval', input_daftar('diperiksa')), $boleh_periksa),
+            array_intersect(array_map('intval', $rekam['diperiksa'] ?? []), $belum_bisa)
+        )));
         db_ubah('persiapan', $rekam['id'], ['diperiksa' => $pilih, 'diperbarui_pada' => date('Y-m-d H:i', strtotime(sekarang())), 'diperbarui_oleh' => $pengguna['id']]);
         $hasil = persiapan_proyek($proyek);
         catat_riwayat('Persiapan', $proyek['kode'], $hasil['selesai'] . ' dari ' . $hasil['total'] . ' barang diperiksa');
@@ -296,6 +303,9 @@ if (is_post()) {
             $catatan = [];
             if ($hasil['menunggu'] > 0) {
                 $catatan[] = $hasil['menunggu'] . ' alokasi masih Direncanakan dan belum bisa diperiksa';
+            }
+            if ($hasil['menunggu_vendor'] > 0) {
+                $catatan[] = $hasil['menunggu_vendor'] . ' rental menunggu penerimaan vendor';
             }
             if ($hasil['kurang'] > 0) {
                 $catatan[] = $hasil['kurang'] . ' unit kebutuhan belum dialokasikan';
@@ -477,7 +487,10 @@ require ROOT . '/includes/layout_head.php';
 <span class="sumber sumber-<?= e(strtolower(str_replace(' ', '-', $a['sumber']))) ?>"><?= ikon($a['sumber'] === 'Studio' ? 'camera' : ($a['sumber'] === 'Rental' ? 'truck' : 'user'), 14) ?><?= e($a['sumber']) ?></span>
 <div class="daftar-utama">
 <p class="daftar-judul"><?= e(nama_barang_alokasi($a)) ?><?= jumlah_alokasi($a) > 1 ? ' <span class="redup">× ' . jumlah_alokasi($a) . '</span>' : '' ?></p>
-<p class="daftar-sub"><?= e(keterangan_sumber($a)) ?><?= $a['catatan'] !== '' ? ' · ' . e($a['catatan']) : '' ?></p>
+<p class="daftar-sub"><?= e(keterangan_sumber($a)) ?><?= $a['catatan'] !== '' ? ' · ' . ($a['sumber'] === 'Rental' ? 'catatan (teks bebas): ' : '') . e($a['catatan']) : '' ?></p>
+<?php if ($a['sumber'] === 'Rental' && !$batal): ?>
+<p class="daftar-sub" data-rental>Vendor: <?= e(ringkasan_rental_teks($a)) ?></p>
+<?php endif; ?>
 </div>
 <div class="alokasi-status">
 <?= badge($a['status'], label_status_alokasi($a)) ?>
@@ -490,7 +503,7 @@ require ROOT . '/includes/layout_head.php';
 <?= badge(status_keluar($a), 'Keluar · ' . status_keluar($a)) ?>
 <?php endif; ?>
 </div>
-<?php if (boleh('alokasi.kelola') && $bisa_ubah && !$batal && !$serah): ?>
+<?php if (boleh('alokasi.kelola') && $bisa_ubah && !$batal && !$serah && !rental_punya_catatan_vendor($a)): ?>
 <div class="aksi-baris">
 <?php if ($a['status'] === 'Direncanakan'): ?>
 <?= tombol_konfirmasi(['label' => 'Konfirmasi', 'ikon' => 'check', 'aksi' => 'konfirmasi_alokasi', 'id' => $a['id'], 'judul' => 'Konfirmasi alokasi?', 'pesan' => nama_barang_alokasi($a) . ' (' . keterangan_sumber($a) . ') dipastikan tersedia untuk proyek ini.', 'tombol' => 'Konfirmasi', 'aman' => true]) ?>
@@ -534,8 +547,9 @@ require ROOT . '/includes/layout_head.php';
 <?= bilah($persiapan['persen'], $persiapan['lewat'] ? 'merah' : 'tinta') ?>
 <span><strong data-progres-angka><?= $persiapan['selesai'] ?></strong> dari <?= $persiapan['total'] ?> diperiksa</span>
 </div>
-<?php if ($persiapan['menunggu'] > 0 || $persiapan['kurang'] > 0): ?>
-<p class="kecil teks-kuning"><?= $persiapan['menunggu'] > 0 ? e($persiapan['menunggu'] . ' alokasi masih Direncanakan') : '' ?><?= $persiapan['menunggu'] > 0 && $persiapan['kurang'] > 0 ? ' · ' : '' ?><?= $persiapan['kurang'] > 0 ? e($persiapan['kurang'] . ' unit kebutuhan belum dialokasikan') : '' ?></p>
+<?php $catatan_p = array_filter([$persiapan['menunggu'] > 0 ? $persiapan['menunggu'] . ' alokasi masih Direncanakan' : '', $persiapan['menunggu_vendor'] > 0 ? $persiapan['menunggu_vendor'] . ' rental menunggu penerimaan vendor' : '', $persiapan['kurang'] > 0 ? $persiapan['kurang'] . ' unit kebutuhan belum dialokasikan' : '']); ?>
+<?php if ($catatan_p): ?>
+<p class="kecil teks-kuning"><?= e(implode(' · ', $catatan_p)) ?></p>
 <?php endif; ?>
 <?php if ($bisa_centang): ?>
 <button type="button" class="btn btn-sekunder btn-kecil" data-centang-semua>Centang semua</button>
@@ -543,14 +557,14 @@ require ROOT . '/includes/layout_head.php';
 </div>
 <ul class="ceklist">
 <?php foreach ($persiapan['item'] as $a): ?>
-<?php $k = db_cari('kebutuhan', $a['kebutuhan_id']); $tercentang = in_array((int) $a['id'], $persiapan['diperiksa'], true); $menunggu = $a['status'] !== 'Dikonfirmasi'; ?>
+<?php $k = db_cari('kebutuhan', $a['kebutuhan_id']); $tercentang = in_array((int) $a['id'], $persiapan['diperiksa'], true); $menunggu = !alokasi_bisa_diperiksa($a); $tunggu_vendor = $a['status'] === 'Dikonfirmasi' && $menunggu; ?>
 <li>
 <label class="ceklist-item<?= $menunggu ? ' ceklist-mati' : '' ?>">
 <input type="checkbox" name="diperiksa[]" value="<?= (int) $a['id'] ?>"<?= $tercentang ? ' checked' : '' ?><?= $bisa_centang && !$menunggu ? '' : ' disabled' ?>>
 <span class="ceklist-kotak" aria-hidden="true"><?= ikon('check', 14) ?></span>
 <span class="daftar-utama">
 <span class="daftar-judul"><?= e(nama_barang_alokasi($a)) ?><?= jumlah_alokasi($a) > 1 ? ' × ' . jumlah_alokasi($a) : '' ?></span>
-<span class="daftar-sub"><?= e(keterangan_sumber($a)) ?> · untuk <?= e($k['nama'] ?? '—') ?><?= $menunggu ? ' · <span class="teks-kuning">' . e(label_status_alokasi($a)) . ', belum bisa diperiksa</span>' : '' ?></span>
+<span class="daftar-sub"><?= e(keterangan_sumber($a)) ?> · untuk <?= e($k['nama'] ?? '—') ?><?= $menunggu ? ' · <span class="teks-kuning">' . e($tunggu_vendor ? 'Menunggu penerimaan vendor' : label_status_alokasi($a)) . ', belum bisa diperiksa' . (in_array((int) $a['id'], $persiapan['centang_tertahan'], true) ? ' (centang lama tersimpan, belum berlaku)' : '') . '</span>' : '' ?></span>
 </span>
 <span class="sumber sumber-<?= e(strtolower(str_replace(' ', '-', $a['sumber']))) ?>"><?= e($a['sumber']) ?></span>
 </label>
