@@ -18,7 +18,7 @@ foreach ($anggota as $a) {
     $opsi_pemilik[$a['pengguna']['id']] = $a['pengguna']['nama'];
 }
 $sumber_pilih = $nilai('sumber', 'Studio');
-$sisa = max(0, $kd['jumlah'] - pemenuhan_kebutuhan($kd)['terisi']);
+$sisa = pemenuhan_kebutuhan($kd)['sisa'];
 ?>
 <?= dialog_buka($id_dialog, 'Alokasi: ' . $kd['nama'], 'Butuh ' . $kd['jumlah'] . ' · tersisa ' . $sisa . ($kd['acuan'] !== '' ? ' · acuan ' . $kd['acuan'] : ''), 'dialog dialog-lebar') ?>
 <input type="hidden" name="aksi" value="tambah_alokasi">
@@ -54,6 +54,12 @@ $sisa = max(0, $kd['jumlah'] - pemenuhan_kebutuhan($kd)['terisi']);
 <input id="<?= e($id_dialog) ?>-barang" name="nama_barang" type="text" maxlength="60" value="<?= e($nilai('nama_barang', $kd['acuan'])) ?>" data-bawaan="<?= e($kd['acuan']) ?>"<?= $attr_di('nama_barang') ?>>
 <?= $galat_di('nama_barang') ?>
 </div>
+<div class="bidang">
+<label for="<?= e($id_dialog) ?>-jumlah">Jumlah</label>
+<input id="<?= e($id_dialog) ?>-jumlah" name="jumlah" type="number" min="1" max="<?= (int) $sisa ?>" step="1" value="<?= e($nilai('jumlah', '1')) ?>" data-bawaan="1"<?= $attr_di('jumlah') ?>>
+<?= $galat_di('jumlah') ?>
+<p class="petunjuk">Maksimal <?= (int) $sisa ?> sesuai sisa kebutuhan. Unit studio selalu dihitung satu per alokasi.</p>
+</div>
 <div class="bidang" data-saat="sumber=Rental">
 <label for="<?= e($id_dialog) ?>-vendor">Vendor rental</label>
 <input id="<?= e($id_dialog) ?>-vendor" name="vendor" type="text" maxlength="60" value="<?= e($nilai('vendor')) ?>" placeholder="Contoh: Rental Kamera Malang"<?= $attr_di('vendor') ?>>
@@ -73,6 +79,7 @@ $sisa = max(0, $kd['jumlah'] - pemenuhan_kebutuhan($kd)['terisi']);
 <select id="<?= e($id_dialog) ?>-status" name="status" data-bawaan="Dikonfirmasi">
 <?= opsi(['Dikonfirmasi' => 'Dikonfirmasi', 'Direncanakan' => 'Direncanakan (menunggu)'], $nilai('status', 'Dikonfirmasi')) ?>
 </select>
+<?= $galat_di('status') ?>
 <p class="petunjuk" data-saat="sumber=Rental">Pilih Direncanakan jika vendor belum mengonfirmasi.</p>
 </div>
 <div class="bidang">
