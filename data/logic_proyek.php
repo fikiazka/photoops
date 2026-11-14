@@ -103,6 +103,54 @@ function kebutuhan_proyek(int $proyek_id): array
     return $hasil;
 }
 
+function wajib_proyek_aktif(array $proyek): void
+{
+    if (!proyek_aktif($proyek)) {
+        flash('error', 'Proyek ' . $proyek['kode'] . ' berstatus ' . $proyek['status'] . '. Kebutuhan dan alokasinya tidak bisa diubah lagi.');
+        muat_ulang();
+    }
+}
+
+function validasi_kebutuhan(array $data, ?array $lama): array
+{
+    $galat = [];
+    $panjang_nama = mb_strlen($data['nama']);
+    if ($panjang_nama < 2) {
+        $galat['nama'] = 'Nama kebutuhan wajib diisi.';
+    } elseif ($panjang_nama > 60) {
+        $galat['nama'] = 'Nama kebutuhan maksimal 60 karakter.';
+    }
+    if (!db_cari('kategori', (int) $data['kategori_id'])) {
+        $galat['kategori_id'] = 'Pilih kategori.';
+    } elseif ($lama && (int) $data['kategori_id'] !== (int) $lama['kategori_id']) {
+        $aktif = count(array_filter(alokasi_kebutuhan($lama['id']), fn ($a) => $a['status'] !== 'Dibatalkan'));
+        if (kebutuhan_punya_serah($lama['id'])) {
+            $galat['kategori_id'] = 'Kategori tidak bisa diubah karena barang untuk kebutuhan ini sudah tercatat keluar di serah terima. Kategori dikunci agar alokasi dan riwayat transaksinya tetap sah.';
+        } elseif ($aktif > 0) {
+            $galat['kategori_id'] = 'Kategori tidak bisa diubah karena masih ada ' . $aktif . ' alokasi aktif. Batalkan atau hapus alokasi terkait terlebih dahulu.';
+        }
+    }
+    if (!preg_match('/^\d{1,3}$/', $data['jumlah']) || (int) $data['jumlah'] < 1 || (int) $data['jumlah'] > 50) {
+        $galat['jumlah'] = 'Jumlah harus bilangan bulat 1 sampai 50.';
+    } elseif ($lama && (int) $data['jumlah'] < pemenuhan_kebutuhan($lama)['terisi']) {
+        $galat['jumlah'] = 'Sudah ada ' . pemenuhan_kebutuhan($lama)['terisi'] . ' alokasi aktif. Batalkan atau hapus alokasinya dulu.';
+    }
+    if (mb_strlen($data['acuan']) > 60) {
+        $galat['acuan'] = 'Model acuan maksimal 60 karakter.';
+    }
+    return $galat;
+}
+
+function kebutuhan_punya_serah(int $kebutuhan_id): bool
+{
+    foreach (alokasi_kebutuhan($kebutuhan_id) as $alokasi) {
+        if (serah_alokasi($alokasi['id'])) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function alokasi_proyek(int $proyek_id, bool $aktif_saja = false): array
 {
     $hasil = [];

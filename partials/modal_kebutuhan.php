@@ -31,8 +31,9 @@ foreach (db('preset') as $preset_opsi) {
 </div>
 <div class="bidang">
 <label for="kebutuhan-acuan">Model acuan <span class="redup">(opsional)</span></label>
-<input id="kebutuhan-acuan" name="acuan" type="text" maxlength="60" list="daftar-model" value="<?= e(lama('acuan')) ?>" placeholder="Contoh: Sony A7 III">
+<input id="kebutuhan-acuan" name="acuan" type="text" maxlength="60" list="daftar-model" value="<?= e(lama('acuan')) ?>" placeholder="Contoh: Sony A7 III"<?= attr_galat('acuan') ?>>
 <p class="petunjuk">Membantu petugas memilih unit yang sesuai. Kosongkan jika model bebas.</p>
+<?= pesan_galat('acuan') ?>
 </div>
 <datalist id="daftar-model">
 <?php foreach (array_keys(stok_model()) as $model): ?>

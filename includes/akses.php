@@ -23,7 +23,7 @@ function hak_akses(): array
         'proyek.lihat' => ['sa', 'pi', 'us'],
         'proyek.semua' => ['sa', 'pi'],
         'proyek.kelola' => ['sa'],
-        'kebutuhan.kelola' => ['sa'],
+        'kebutuhan.kelola' => ['sa', 'pi'],
         'anggota.kelola' => ['sa'],
         'preset.lihat' => ['sa', 'pi'],
         'preset.kelola' => ['sa', 'pi'],
