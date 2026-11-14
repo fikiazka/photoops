@@ -94,7 +94,7 @@ judul_halaman(
 <span class="kecil redup">Belum ada barang</span>
 <?php else: ?>
 <div class="progres">
-<?= bilah($persiapan['persen'], $persiapan['lewat'] ? 'merah' : ($persiapan['persen'] === 100 ? 'hijau' : 'tinta')) ?>
+<?= bilah($persiapan['persen'], $persiapan['lewat'] ? 'merah' : ($persiapan['status'] === 'Siap' ? 'hijau' : 'tinta')) ?>
 <span class="kecil"><?= $persiapan['selesai'] ?>/<?= $persiapan['total'] ?></span>
 </div>
 <?php if ($persiapan['lewat']): ?><span class="kecil teks-merah">Lewat deadline</span><?php endif; ?>

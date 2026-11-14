@@ -25,7 +25,7 @@ $total_unit = array_sum($ringkas);
 $sumber = array_fill_keys(daftar_sumber(), 0);
 foreach (db('alokasi') as $a) {
     if ($a['status'] !== 'Dibatalkan') {
-        $sumber[$a['sumber']]++;
+        $sumber[$a['sumber']] += jumlah_alokasi($a);
     }
 }
 $total_sumber = max(1, array_sum($sumber));

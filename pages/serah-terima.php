@@ -14,6 +14,10 @@ if (is_post()) {
     $pilih = array_map('intval', input_daftar('alokasi'));
 
     if ($aksi === 'checkout') {
+        if (!proyek_aktif($proyek)) {
+            flash('error', 'Proyek ' . $proyek['kode'] . ' berstatus ' . $proyek['status'] . ', jadi barang tidak bisa dikeluarkan lagi. Pengembalian barang yang masih di luar tetap bisa dicatat.');
+            muat_ulang();
+        }
         $modal = 'dialog-keluar-' . $proyek['id'];
         $boleh_pilih = [];
         foreach (unit_siap_keluar($proyek['id']) as $baris) {

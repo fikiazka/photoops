@@ -376,7 +376,7 @@ require ROOT . '/includes/layout_head.php';
 <div class="kartu kpi">
 <p class="kpi-label">Barang diperiksa</p>
 <p class="kpi-angka"><?= $persiapan['selesai'] ?><span class="kpi-dari">/<?= $persiapan['total'] ?></span></p>
-<?= bilah($persiapan['persen'], $persiapan['lewat'] ? 'merah' : ($persiapan['persen'] === 100 ? 'hijau' : 'tinta')) ?>
+<?= bilah($persiapan['persen'], $persiapan['lewat'] ? 'merah' : ($persiapan['status'] === 'Siap' ? 'hijau' : 'tinta')) ?>
 </div>
 <div class="kartu kpi">
 <p class="kpi-label">Unit studio di luar</p>

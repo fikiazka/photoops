@@ -390,7 +390,7 @@ function persiapan_proyek(array $proyek): array
     } else {
         $status = 'Siap';
     }
-    $lewat = proyek_aktif($proyek) && $total > 0 && $selesai < $total && sekarang() > $proyek['deadline_persiapan'];
+    $lewat = proyek_aktif($proyek) && ($total > 0 || $kurang > 0) && $status !== 'Siap' && sekarang() > $proyek['deadline_persiapan'];
     return [
         'item' => $item,
         'diperiksa' => $diperiksa,
