@@ -1365,6 +1365,16 @@ h3 {
   margin: 0 20px 16px;
 }
 
+.teks-pecah {
+  overflow-wrap: anywhere;
+}
+
+@media (min-width: 721px) {
+  .tabel-eksternal td[data-label="Barang"] {
+    min-width: 120px;
+  }
+}
+
 .aksi-baris {
   display: flex;
   flex-wrap: wrap;

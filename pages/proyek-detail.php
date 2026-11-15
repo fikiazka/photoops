@@ -24,6 +24,15 @@ if (is_post()) {
             flash('error', 'Proyek ini sudah punya riwayat serah terima. Ubah statusnya menjadi Dibatalkan atau Selesai.');
             muat_ulang();
         }
+        $penghalang = rental_penghalang_hapus($pid);
+        if ($penghalang['catatan_vendor']) {
+            flash('error', 'Proyek ini punya catatan penerimaan/pengembalian rental dari vendor (' . implode(', ', $penghalang['catatan_vendor']) . ') yang harus dipertahankan. Ubah statusnya menjadi Dibatalkan atau Selesai, lalu selesaikan rental lewat Perlengkapan › Barang eksternal.');
+            muat_ulang();
+        }
+        if ($penghalang['komitmen']) {
+            flash('error', 'Proyek ini masih punya rental yang sudah dikonfirmasi vendor (' . implode(', ', $penghalang['komitmen']) . '). Batalkan alokasi rental tersebut terlebih dahulu atau ubah status proyek menjadi Dibatalkan.');
+            muat_ulang();
+        }
         hapus_proyek($pid);
         catat_riwayat('Proyek', $proyek['kode'] . ' · ' . $proyek['nama'], 'Proyek dihapus');
         flash('sukses', 'Proyek ' . $proyek['kode'] . ' dihapus.');
@@ -363,7 +372,7 @@ require ROOT . '/includes/layout_head.php';
 <?php if (boleh('proyek.kelola')): ?>
 <div class="kepala-aksi">
 <?= tombol_modal('dialog-proyek', 'Ubah proyek', data_form_proyek($proyek), 'pencil', 'btn btn-sekunder') ?>
-<?= tombol_konfirmasi(['label' => 'Hapus', 'ikon' => 'trash-2', 'aksi' => 'hapus_proyek', 'id' => $pid, 'judul' => 'Hapus proyek ' . $proyek['kode'] . '?', 'pesan' => 'Kebutuhan, tim, alokasi, dan persiapan proyek ini ikut terhapus. Proyek yang sudah punya serah terima tidak bisa dihapus.', 'tombol' => 'Hapus proyek', 'kelas' => 'btn btn-sekunder']) ?>
+<?= tombol_konfirmasi(['label' => 'Hapus', 'ikon' => 'trash-2', 'aksi' => 'hapus_proyek', 'id' => $pid, 'judul' => 'Hapus proyek ' . $proyek['kode'] . '?', 'pesan' => 'Kebutuhan, tim, alokasi, dan persiapan proyek ini ikut terhapus. Proyek yang sudah punya serah terima, rental yang dikonfirmasi vendor, atau catatan rental vendor tidak bisa dihapus.', 'tombol' => 'Hapus proyek', 'kelas' => 'btn btn-sekunder']) ?>
 </div>
 <?php endif; ?>
 </div>

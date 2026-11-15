@@ -540,6 +540,22 @@ function hapus_proyek(int $proyek_id): void
     db_hapus('proyek', $proyek_id);
 }
 
+function rental_penghalang_hapus(int $proyek_id): array
+{
+    $hasil = ['catatan_vendor' => [], 'komitmen' => []];
+    foreach (db('alokasi') as $alokasi) {
+        if ((int) $alokasi['proyek_id'] !== $proyek_id || $alokasi['sumber'] !== 'Rental') {
+            continue;
+        }
+        if (!empty($alokasi['diterima_pada']) || !empty($alokasi['dikembalikan_vendor_pada'])) {
+            $hasil['catatan_vendor'][] = $alokasi['nama_barang'];
+        } elseif ($alokasi['status'] === 'Dikonfirmasi') {
+            $hasil['komitmen'][] = $alokasi['nama_barang'];
+        }
+    }
+    return $hasil;
+}
+
 function proyek_punya_transaksi(int $proyek_id): bool
 {
     foreach (db('transaksi') as $trx) {

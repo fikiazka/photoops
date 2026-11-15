@@ -354,6 +354,9 @@ function info_rental(array $alokasi): array
     } elseif (!$jatuh_tempo) {
         $status = 'Belum Dicatat';
         $ket = 'Jatuh tempo vendor belum diatur';
+    } elseif ($sisa < 0 && $diterima === null) {
+        $status = 'Tempo Vendor Lewat';
+        $ket = 'Belum diterima · lewat ' . abs($sisa) . ' hari';
     } elseif ($sisa < 0) {
         $status = 'Terlambat';
         $ket = 'Terlambat ' . abs($sisa) . ' hari';

@@ -217,18 +217,23 @@ $eks_tampil = array_values(array_filter($eksternal, function ($b) use ($f_sumber
 </div>
 </div>
 <?php
-$sewa_terlambat = 0;
-$sewa_dekat = 0;
+$sewa_hitung = ['Terlambat' => 0, 'Mendekati Jatuh Tempo' => 0, 'Tempo Vendor Lewat' => 0];
 foreach ($eksternal as $bx) {
     if ($bx['alokasi']['sumber'] === 'Rental') {
         $sx = info_rental($bx['alokasi'])['status_sewa'];
-        $sewa_terlambat += $sx === 'Terlambat' ? 1 : 0;
-        $sewa_dekat += $sx === 'Mendekati Jatuh Tempo' ? 1 : 0;
+        if (isset($sewa_hitung[$sx])) {
+            $sewa_hitung[$sx]++;
+        }
     }
 }
+$sewa_pesan = array_filter([
+    $sewa_hitung['Terlambat'] ? $sewa_hitung['Terlambat'] . ' rental terlambat dikembalikan ke vendor' : '',
+    $sewa_hitung['Mendekati Jatuh Tempo'] ? $sewa_hitung['Mendekati Jatuh Tempo'] . ' rental mendekati jatuh tempo (H-2)' : '',
+    $sewa_hitung['Tempo Vendor Lewat'] ? $sewa_hitung['Tempo Vendor Lewat'] . ' rental lewat tempo vendor tetapi penerimaannya belum dicatat' : '',
+]);
 ?>
-<?php if ($sewa_terlambat || $sewa_dekat): ?>
-<div class="pemberitahuan <?= $sewa_terlambat ? 'pemberitahuan-error' : 'pemberitahuan-info' ?> pemberitahuan-kartu" role="status" data-peringatan-sewa><?= ikon('triangle-alert') ?><span><?= $sewa_terlambat ? e($sewa_terlambat . ' rental terlambat dikembalikan ke vendor') : '' ?><?= $sewa_terlambat && $sewa_dekat ? ' · ' : '' ?><?= $sewa_dekat ? e($sewa_dekat . ' rental mendekati jatuh tempo (H-2)') : '' ?>. Perpanjang atau kembalikan ke vendor.</span></div>
+<?php if ($sewa_pesan): ?>
+<div class="pemberitahuan <?= $sewa_hitung['Terlambat'] ? 'pemberitahuan-error' : 'pemberitahuan-info' ?> pemberitahuan-kartu" role="status" data-peringatan-sewa><?= ikon('triangle-alert') ?><span><?= e(implode(' · ', $sewa_pesan)) ?>. Periksa penerimaan, perpanjang, atau kembalikan ke vendor.</span></div>
 <?php endif; ?>
 <?php if (!$eksternal): ?>
 <?= kosong('Belum ada barang eksternal', 'Barang Rental dan Milik Kru muncul otomatis setelah dialokasikan di proyek.') ?>
@@ -236,16 +241,16 @@ foreach ($eksternal as $bx) {
 <?= kosong('Tidak ada barang eksternal yang cocok', 'Ubah saringan atau kata kunci pencarian.') ?>
 <?php else: ?>
 <div class="tabel-wrap">
-<table class="tabel tabel-kartu">
+<table class="tabel tabel-kartu tabel-eksternal">
 <thead><tr><th>Barang</th><th class="angka">Jumlah</th><th>Proyek &amp; periode</th><th>Sumber</th><th>Status</th><th>Sewa vendor</th><th><span class="sr">Aksi</span></th></tr></thead>
 <tbody>
 <?php foreach ($eks_tampil as $b): ?>
 <?php $a = $b['alokasi']; $pr = $b['proyek']; ?>
 <tr>
-<td data-label="Barang"><strong><?= e($a['nama_barang'] !== '' ? $a['nama_barang'] : 'Belum dicatat') ?></strong><div class="kecil redup">Untuk <?= e($b['kebutuhan']['nama'] ?? 'kebutuhan dihapus') ?></div><?= $a['catatan'] !== '' ? '<div class="kecil redup" data-catatan>Catatan (teks bebas): ' . e($a['catatan']) . '</div>' : '' ?></td>
+<td data-label="Barang"><strong class="teks-pecah"><?= e($a['nama_barang'] !== '' ? $a['nama_barang'] : 'Belum dicatat') ?></strong><div class="kecil redup">Untuk <?= e($b['kebutuhan']['nama'] ?? 'kebutuhan dihapus') ?></div><?= $a['catatan'] !== '' ? '<div class="kecil redup teks-pecah" data-catatan>Catatan (teks bebas): ' . e($a['catatan']) . '</div>' : '' ?></td>
 <td data-label="Jumlah" class="angka"><?= (int) $b['jumlah'] ?> unit</td>
 <td data-label="Proyek &amp; periode"><strong><?= e($pr['kode'] ?? '?') ?></strong><div class="kecil redup"><?= e($pr['nama'] ?? 'Proyek tidak ditemukan') ?><?= $pr ? ' · ' . e($pr['status']) : '' ?></div><div class="kecil">Pakai <?= e(rentang_tgl($a['tgl_mulai'], $a['tgl_selesai'])) ?></div></td>
-<td data-label="Sumber"><span class="sumber sumber-<?= e(strtolower(str_replace(' ', '-', $a['sumber']))) ?>"><?= ikon($a['sumber'] === 'Rental' ? 'truck' : 'user', 14) ?><?= e($a['sumber']) ?></span><div class="kecil redup"><?= $a['sumber'] === 'Rental' ? 'Vendor' : 'Pemilik' ?>: <?= e($b['asal'] !== '' ? $b['asal'] : 'Belum dicatat') ?></div><?= $a['sumber'] === 'Rental' && ($a['kontak_vendor'] ?? '') !== '' ? '<div class="kecil redup">Kontak: ' . e($a['kontak_vendor']) . '</div>' : '' ?></td>
+<td data-label="Sumber"><span class="sumber sumber-<?= e(strtolower(str_replace(' ', '-', $a['sumber']))) ?>"><?= ikon($a['sumber'] === 'Rental' ? 'truck' : 'user', 14) ?><?= e($a['sumber']) ?></span><div class="kecil redup teks-pecah"><?= $a['sumber'] === 'Rental' ? 'Vendor' : 'Pemilik' ?>: <?= e($b['asal'] !== '' ? $b['asal'] : 'Belum dicatat') ?></div><?= $a['sumber'] === 'Rental' && ($a['kontak_vendor'] ?? '') !== '' ? '<div class="kecil redup teks-pecah">Kontak: ' . e($a['kontak_vendor']) . '</div>' : '' ?></td>
 <td data-label="Status"><?= badge($a['status']) ?><?= label_status_alokasi($a) !== $a['status'] ? '<div class="kecil redup">' . e(label_status_alokasi($a)) . '</div>' : '' ?>
 <div class="kecil" data-pemeriksaan>
 <?php if ($a['status'] === 'Dibatalkan'): ?>
