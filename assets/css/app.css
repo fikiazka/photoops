@@ -1657,6 +1657,89 @@ fieldset.bidang legend {
   flex: 1 1 280px;
 }
 
+.persiapan-progres > p {
+  flex: 1 1 100%;
+  margin: 0;
+}
+
+.persiapan-status {
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.persiapan-status .pemberitahuan p {
+  margin: 0;
+}
+
+.pemberitahuan-peringatan {
+  background: var(--kuning-bg);
+  color: var(--kuning);
+}
+
+.daftar-syarat {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.persiapan-tombol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.info-ringkas {
+  margin: 0 0 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.info-ringkas > div {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.info-ringkas dt {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.info-ringkas dd {
+  margin: 0;
+}
+
+.persiapan-progres > .info-persiapan {
+  flex: 1 1 100%;
+  margin: 0;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.info-persiapan > div {
+  grid-template-columns: 96px minmax(0, 1fr);
+}
+
+.tabel-eksternal tr:target > td,
+.alokasi:target,
+.kebutuhan:target {
+  background: var(--kuning-bg);
+}
+
+.tabel-eksternal tr:target,
+.alokasi:target,
+.kebutuhan:target {
+  scroll-margin-top: 96px;
+}
+
+@media (max-width: 720px) {
+  .alokasi > .daftar-utama {
+    flex: 1 1 180px;
+  }
+}
+
 .unit-mini {
   list-style: none;
   margin: 6px 0 0;

@@ -246,7 +246,7 @@ $sewa_pesan = array_filter([
 <tbody>
 <?php foreach ($eks_tampil as $b): ?>
 <?php $a = $b['alokasi']; $pr = $b['proyek']; ?>
-<tr>
+<tr id="alokasi-<?= (int) $a['id'] ?>">
 <td data-label="Barang"><strong class="teks-pecah"><?= e($a['nama_barang'] !== '' ? $a['nama_barang'] : 'Belum dicatat') ?></strong><div class="kecil redup">Untuk <?= e($b['kebutuhan']['nama'] ?? 'kebutuhan dihapus') ?></div><?= $a['catatan'] !== '' ? '<div class="kecil redup teks-pecah" data-catatan>Catatan (teks bebas): ' . e($a['catatan']) . '</div>' : '' ?></td>
 <td data-label="Jumlah" class="angka"><?= (int) $b['jumlah'] ?> unit</td>
 <td data-label="Proyek &amp; periode"><strong><?= e($pr['kode'] ?? '?') ?></strong><div class="kecil redup"><?= e($pr['nama'] ?? 'Proyek tidak ditemukan') ?><?= $pr ? ' · ' . e($pr['status']) : '' ?></div><div class="kecil">Pakai <?= e(rentang_tgl($a['tgl_mulai'], $a['tgl_selesai'])) ?></div></td>

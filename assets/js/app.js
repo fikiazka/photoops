@@ -126,6 +126,20 @@
     if (isi && kotak.length) {
       isi.style.width = Math.round(centang / kotak.length * 100) + '%';
     }
+    var persen = form.querySelector('[data-progres-persen]');
+    if (persen && kotak.length) {
+      persen.textContent = Math.round(centang / kotak.length * 100);
+    }
+    var periksa = form.querySelector('[data-status-periksa]');
+    if (periksa) {
+      periksa.textContent = centang === 0 ? 'Belum ada barang yang diperiksa' : (centang < kotak.length ? 'Sebagian barang sudah diperiksa' : 'Semua barang sudah diperiksa');
+    }
+    var berubah = form.querySelector('[data-belum-disimpan]');
+    if (berubah) {
+      berubah.hidden = !Array.prototype.some.call(kotak, function (k) {
+        return k.checked !== k.defaultChecked;
+      });
+    }
   }
 
   document.addEventListener('click', function (ev) {

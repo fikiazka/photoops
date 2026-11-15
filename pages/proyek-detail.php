@@ -81,6 +81,7 @@ if (is_post()) {
     if ($aksi === 'simpan_kebutuhan') {
         wajib_boleh('kebutuhan.kelola');
         wajib_proyek_aktif($proyek);
+        wajib_persiapan_terbuka($proyek);
         $id = (int) input('id');
         $lama_k = null;
         if ($id) {
@@ -113,6 +114,7 @@ if (is_post()) {
     if ($aksi === 'hapus_kebutuhan') {
         wajib_boleh('kebutuhan.kelola');
         wajib_proyek_aktif($proyek);
+        wajib_persiapan_terbuka($proyek);
         $k = db_cari('kebutuhan', (int) input('id'));
         if (!$k || (int) $k['proyek_id'] !== $pid) {
             flash('error', 'Kebutuhan tidak ditemukan di proyek ini.');
@@ -141,6 +143,7 @@ if (is_post()) {
     if ($aksi === 'isi_preset') {
         wajib_boleh('kebutuhan.kelola');
         wajib_proyek_aktif($proyek);
+        wajib_persiapan_terbuka($proyek);
         $preset = db_cari('preset', (int) input('preset_id'));
         if (!$preset) {
             simpan_form('dialog-isi-preset', [], ['preset_id' => 'Pilih preset.']);
@@ -168,6 +171,7 @@ if (is_post()) {
     if ($aksi === 'tambah_alokasi') {
         wajib_boleh('alokasi.kelola');
         wajib_proyek_aktif($proyek);
+        wajib_persiapan_terbuka($proyek);
         $k = db_cari('kebutuhan', (int) input('kebutuhan_id'));
         if (!$k || (int) $k['proyek_id'] !== $pid) {
             flash('error', 'Kebutuhan tidak ditemukan di proyek ini.');
@@ -256,6 +260,7 @@ if (is_post()) {
     if (in_array($aksi, ['konfirmasi_alokasi', 'batalkan_alokasi', 'hapus_alokasi'], true)) {
         wajib_boleh('alokasi.kelola');
         wajib_proyek_aktif($proyek);
+        wajib_persiapan_terbuka($proyek);
         $a = db_cari('alokasi', (int) input('id'));
         if (!$a || (int) $a['proyek_id'] !== $pid) {
             flash('error', 'Alokasi tidak ditemukan di proyek ini.');
@@ -295,19 +300,31 @@ if (is_post()) {
     if ($aksi === 'simpan_persiapan') {
         wajib_boleh('persiapan.kelola');
         wajib_proyek_aktif($proyek);
+        wajib_persiapan_terbuka($proyek);
+        $mentah = $_POST['diperiksa'] ?? [];
+        if (!is_array($mentah) || array_filter($mentah, fn ($v) => !is_string($v))) {
+            flash('error', 'Data checklist tidak valid. Muat ulang halaman lalu centang kembali.');
+            muat_ulang();
+        }
+        $kiriman = array_values(array_unique(array_map(fn ($v) => preg_match('/^\d{1,9}$/', $v) ? (int) $v : 0, input_daftar('diperiksa'))));
         $aktif_p = alokasi_proyek($pid, true);
         $boleh_periksa = array_map(fn ($a) => (int) $a['id'], array_filter($aktif_p, 'alokasi_bisa_diperiksa'));
         $belum_bisa = array_map(fn ($a) => (int) $a['id'], array_filter($aktif_p, fn ($a) => !alokasi_bisa_diperiksa($a)));
+        $diabaikan = count(array_diff($kiriman, $boleh_periksa));
         $rekam = ambil_persiapan($pid);
         $pilih = array_values(array_unique(array_merge(
-            array_intersect(array_map('intval', input_daftar('diperiksa')), $boleh_periksa),
+            array_intersect($kiriman, $boleh_periksa),
             array_intersect(array_map('intval', $rekam['diperiksa'] ?? []), $belum_bisa)
         )));
         db_ubah('persiapan', $rekam['id'], ['diperiksa' => $pilih, 'diperbarui_pada' => date('Y-m-d H:i', strtotime(sekarang())), 'diperbarui_oleh' => $pengguna['id']]);
         $hasil = persiapan_proyek($proyek);
         catat_riwayat('Persiapan', $proyek['kode'], $hasil['selesai'] . ' dari ' . $hasil['total'] . ' barang diperiksa');
-        if ($hasil['status'] === 'Siap') {
-            flash('sukses', 'Persiapan lengkap. Barang studio siap diserahkan di menu Serah Terima.');
+        $abaikan_teks = $diabaikan ? ' ' . $diabaikan . ' centang diabaikan karena alokasinya tidak ada di proyek ini atau belum bisa diperiksa.' : '';
+        $nilai_p = penilaian_persiapan($proyek);
+        if ($nilai_p['boleh_konfirmasi']) {
+            flash('sukses', 'Persiapan disimpan: semua ' . $hasil['total'] . ' barang diperiksa dan seluruh syarat terpenuhi. Persiapan belum dikonfirmasi; lanjutkan dengan Konfirmasi Persiapan Selesai.' . $abaikan_teks);
+        } elseif ($hasil['status'] === 'Siap') {
+            flash('sukses', 'Persiapan disimpan: checklist lengkap, tetapi belum bisa dikonfirmasi. ' . implode(' ', $nilai_p['masalah']) . $abaikan_teks);
         } else {
             $catatan = [];
             if ($hasil['menunggu'] > 0) {
@@ -319,8 +336,58 @@ if (is_post()) {
             if ($hasil['kurang'] > 0) {
                 $catatan[] = $hasil['kurang'] . ' unit kebutuhan belum dialokasikan';
             }
-            flash('sukses', 'Persiapan disimpan: ' . $hasil['selesai'] . ' dari ' . $hasil['total'] . ' barang diperiksa' . ($catatan ? '. Belum siap: ' . implode(', ', $catatan) . '.' : '.'));
+            flash('sukses', 'Persiapan disimpan: ' . $hasil['selesai'] . ' dari ' . $hasil['total'] . ' barang diperiksa' . ($catatan ? '. Belum siap: ' . implode(', ', $catatan) . '.' : '.') . $abaikan_teks);
         }
+        muat_ulang();
+    }
+
+    if ($aksi === 'konfirmasi_persiapan' || $aksi === 'buka_ulang_persiapan') {
+        wajib_boleh('persiapan.kelola');
+        if (!proyek_aktif($proyek)) {
+            flash('error', 'Proyek ' . $proyek['kode'] . ' berstatus ' . $proyek['status'] . '. Konfirmasi persiapan tidak bisa dibuat atau dibuka ulang.');
+            muat_ulang();
+        }
+        if (input('proyek_id') !== (string) $pid) {
+            flash('error', 'Formulir tidak cocok dengan proyek ini. Muat ulang halaman lalu coba lagi.');
+            muat_ulang();
+        }
+        $rekam = rekam_persiapan($pid);
+        $nilai_p = penilaian_persiapan($proyek);
+        if ($aksi === 'konfirmasi_persiapan') {
+            if ($nilai_p['dikonfirmasi_pada']) {
+                flash('error', 'Persiapan ' . $proyek['kode'] . ' sudah dikonfirmasi selesai oleh ' . nama_pengguna($nilai_p['dikonfirmasi_oleh']) . ' pada ' . tgl($nilai_p['dikonfirmasi_pada'], 'lengkap') . '. Konfirmasi tidak dicatat dua kali.');
+                muat_ulang();
+            }
+            if (!$nilai_p['boleh_konfirmasi']) {
+                flash('error', 'Persiapan belum bisa dikonfirmasi. ' . implode(' ', $nilai_p['masalah']));
+                muat_ulang();
+            }
+            if (input('konfirmasi') !== '1') {
+                simpan_form('dialog-konfirmasi-persiapan', [], ['konfirmasi' => 'Centang pernyataan bahwa seluruh perlengkapan sudah diperiksa dan siap.']);
+                muat_ulang();
+            }
+            $rekam = ambil_persiapan($pid);
+            $s = $nilai_p['syarat'];
+            db_ubah('persiapan', (int) $rekam['id'], ['dikonfirmasi_pada' => date('Y-m-d H:i', strtotime(sekarang())), 'dikonfirmasi_oleh' => $pengguna['id']]);
+            catat_riwayat('Persiapan', $proyek['kode'], 'Persiapan dikonfirmasi selesai · ' . $s['kebutuhan'] . ' kebutuhan, ' . $s['memenuhi'] . ' alokasi (Studio ' . $s['unit_sumber']['Studio'] . ', Rental ' . $s['unit_sumber']['Rental'] . ', Milik Kru ' . $s['unit_sumber']['Milik Kru'] . ' unit)', 'Siap untuk Dikonfirmasi', 'Dikonfirmasi Selesai');
+            flash('sukses', 'Persiapan ' . $proyek['kode'] . ' dikonfirmasi selesai. Barang belum tercatat keluar; catat penyerahan unit studio di Serah Terima saat barang dibawa.');
+            muat_ulang();
+        }
+        if (!$nilai_p['dikonfirmasi_pada']) {
+            flash('error', 'Persiapan ' . $proyek['kode'] . ' belum dikonfirmasi, jadi tidak ada yang perlu dibuka ulang.');
+            muat_ulang();
+        }
+        if ($nilai_p['beku']) {
+            flash('error', $nilai_p['syarat']['sudah_keluar'] . ' unit proyek ini sudah tercatat keluar di serah terima. Konfirmasi persiapan tidak bisa dibuka ulang agar riwayat transaksi tetap konsisten.');
+            muat_ulang();
+        }
+        $alasan = input('alasan');
+        if (mb_strlen($alasan) < 5 || mb_strlen($alasan) > 120) {
+            simpan_form('dialog-buka-persiapan', ['alasan' => $alasan], ['alasan' => 'Tulis alasan 5 sampai 120 karakter.']);
+            muat_ulang();
+        }
+        cabut_konfirmasi_persiapan($proyek, $rekam, $alasan, false);
+        flash('sukses', 'Persiapan ' . $proyek['kode'] . ' dibuka ulang. Progres checklist tetap tersimpan; konfirmasi ulang diperlukan setelah perubahan selesai.');
         muat_ulang();
     }
 
@@ -341,6 +408,8 @@ if (!isset($tab_daftar[$tab])) {
 $anggota = anggota_proyek($pid);
 $kebutuhan = kebutuhan_proyek($pid);
 $persiapan = persiapan_proyek($proyek);
+$nilai_persiapan = penilaian_persiapan($proyek);
+$ubah_kebutuhan = $bisa_ubah && !$nilai_persiapan['terkunci'];
 $pemenuhan_total = ['terisi' => 0, 'jumlah' => 0, 'dikonfirmasi' => 0, 'diperiksa' => 0];
 foreach ($kebutuhan as $k) {
     $p = pemenuhan_kebutuhan($k);
@@ -453,20 +522,23 @@ require ROOT . '/includes/layout_head.php';
 <h2>Kebutuhan &amp; alokasi</h2>
 <p>Super Admin atau Petugas Inventaris menentukan kebutuhan, lalu memenuhinya dari studio, rental, atau barang milik kru.</p>
 </div>
-<?php if (boleh('kebutuhan.kelola') && $bisa_ubah): ?>
+<?php if (boleh('kebutuhan.kelola') && $ubah_kebutuhan): ?>
 <div class="kepala-aksi">
 <?= tombol_modal('dialog-isi-preset', 'Isi dari preset', [], 'layers', 'btn btn-sekunder btn-kecil') ?>
 <?= tombol_modal('dialog-kebutuhan', 'Tambah kebutuhan', ['_judul' => 'Tambah kebutuhan'], 'plus', 'btn btn-kecil') ?>
 </div>
 <?php endif; ?>
 </div>
+<?php if ($nilai_persiapan['terkunci']): ?>
+<div class="pemberitahuan pemberitahuan-info pemberitahuan-kartu" role="status" data-kunci-persiapan><?= ikon('info') ?><span>Persiapan sudah dikonfirmasi selesai oleh <?= e(nama_pengguna($nilai_persiapan['dikonfirmasi_oleh'])) ?>, jadi kebutuhan dan alokasi dikunci. <?= $nilai_persiapan['boleh_buka'] ? 'Buka ulang persiapan di tab Persiapan jika memang perlu diubah.' : 'Barang sudah mulai keluar, sehingga konfirmasi tidak bisa dibuka ulang.' ?></span></div>
+<?php endif; ?>
 <?php if (!$kebutuhan): ?>
 <?= kosong('Belum ada kebutuhan', boleh('kebutuhan.kelola') ? 'Tambahkan kebutuhan satu per satu atau isi cepat dari preset.' : 'Kebutuhan barang akan diisi oleh Super Admin atau Petugas Inventaris.') ?>
 <?php else: ?>
 <div class="kebutuhan-daftar">
 <?php foreach ($kebutuhan as $k): ?>
 <?php $p = pemenuhan_kebutuhan($k); $alokasi_k = alokasi_kebutuhan($k['id']); ?>
-<article class="kebutuhan">
+<article class="kebutuhan" id="kebutuhan-<?= (int) $k['id'] ?>">
 <div class="kebutuhan-kepala">
 <div class="daftar-utama">
 <h3><?= e($k['nama']) ?> <span class="redup">× <?= (int) $k['jumlah'] ?></span></h3>
@@ -477,10 +549,10 @@ require ROOT . '/includes/layout_head.php';
 <?= $p['pergerakan'] !== '' ? badge($p['pergerakan']) : '' ?>
 <?= $p['kembali_bermasalah'] > 0 ? badge('Rusak', $p['kembali_bermasalah'] . ' kembali bermasalah') : '' ?>
 <div class="aksi-baris">
-<?php if (boleh('alokasi.kelola') && $bisa_ubah && $p['terisi'] < $p['jumlah']): ?>
+<?php if (boleh('alokasi.kelola') && $ubah_kebutuhan && $p['terisi'] < $p['jumlah']): ?>
 <?= tombol_modal('dialog-alokasi-' . $k['id'], 'Alokasikan', [], 'plus', 'btn btn-kecil') ?>
 <?php endif; ?>
-<?php if (boleh('kebutuhan.kelola') && $bisa_ubah): ?>
+<?php if (boleh('kebutuhan.kelola') && $ubah_kebutuhan): ?>
 <?= tombol_ikon_modal('dialog-kebutuhan', 'Ubah ' . $k['nama'], ['id' => $k['id'], 'nama' => $k['nama'], 'kategori_id' => $k['kategori_id'], 'jumlah' => $k['jumlah'], 'acuan' => $k['acuan'], '_judul' => 'Ubah kebutuhan'], 'pencil') ?>
 <?= tombol_konfirmasi(['label' => 'Hapus ' . $k['nama'], 'ikon' => 'trash-2', 'hanya_ikon' => true, 'aksi' => 'hapus_kebutuhan', 'id' => $k['id'], 'judul' => 'Hapus kebutuhan?', 'pesan' => $k['nama'] . ' × ' . $k['jumlah'] . ' akan dihapus dari proyek ini.', 'tombol' => 'Hapus']) ?>
 <?php endif; ?>
@@ -492,13 +564,16 @@ require ROOT . '/includes/layout_head.php';
 <ul class="alokasi-daftar">
 <?php foreach ($alokasi_k as $a): ?>
 <?php $serah = serah_alokasi($a['id']); $batal = $a['status'] === 'Dibatalkan'; ?>
-<li class="alokasi<?= $batal ? ' alokasi-batal' : '' ?>">
+<li class="alokasi<?= $batal ? ' alokasi-batal' : '' ?>" id="alokasi-<?= (int) $a['id'] ?>">
 <span class="sumber sumber-<?= e(strtolower(str_replace(' ', '-', $a['sumber']))) ?>"><?= ikon($a['sumber'] === 'Studio' ? 'camera' : ($a['sumber'] === 'Rental' ? 'truck' : 'user'), 14) ?><?= e($a['sumber']) ?></span>
 <div class="daftar-utama">
 <p class="daftar-judul"><?= e(nama_barang_alokasi($a)) ?><?= jumlah_alokasi($a) > 1 ? ' <span class="redup">× ' . jumlah_alokasi($a) . '</span>' : '' ?></p>
 <p class="daftar-sub"><?= e(keterangan_sumber($a)) ?><?= $a['catatan'] !== '' ? ' · ' . ($a['sumber'] === 'Rental' ? 'catatan (teks bebas): ' : '') . e($a['catatan']) : '' ?></p>
 <?php if ($a['sumber'] === 'Rental' && !$batal): ?>
 <p class="daftar-sub" data-rental>Vendor: <?= e(ringkasan_rental_teks($a)) ?></p>
+<?php endif; ?>
+<?php if ($a['sumber'] === 'Rental' && !$batal && $bisa_ubah && !empty($a['dikembalikan_vendor_pada'])): ?>
+<p class="daftar-sub teks-kuning" data-rental-tidak-tersedia>Sudah dikembalikan ke vendor, jadi alokasi ini tidak bisa dipakai untuk persiapan proyek.</p>
 <?php endif; ?>
 </div>
 <div class="alokasi-status">
@@ -512,7 +587,7 @@ require ROOT . '/includes/layout_head.php';
 <?= badge(status_keluar($a), 'Keluar · ' . status_keluar($a)) ?>
 <?php endif; ?>
 </div>
-<?php if (boleh('alokasi.kelola') && $bisa_ubah && !$batal && !$serah && !rental_punya_catatan_vendor($a)): ?>
+<?php if (boleh('alokasi.kelola') && $ubah_kebutuhan && !$batal && !$serah && !rental_punya_catatan_vendor($a)): ?>
 <div class="aksi-baris">
 <?php if ($a['status'] === 'Direncanakan'): ?>
 <?= tombol_konfirmasi(['label' => 'Konfirmasi', 'ikon' => 'check', 'aksi' => 'konfirmasi_alokasi', 'id' => $a['id'], 'judul' => 'Konfirmasi alokasi?', 'pesan' => nama_barang_alokasi($a) . ' (' . keterangan_sumber($a) . ') dipastikan tersedia untuk proyek ini.', 'tombol' => 'Konfirmasi', 'aman' => true]) ?>
@@ -533,29 +608,88 @@ require ROOT . '/includes/layout_head.php';
 <?php endif; ?>
 
 <?php if ($tab === 'persiapan'): ?>
+<?php
+$np = $nilai_persiapan;
+$sy = $np['syarat'];
+$kelola_p = boleh('persiapan.kelola') && $bisa_ubah;
+$bisa_centang = $kelola_p && !$np['terkunci'];
+$batal_p = $np['konfirmasi_batal'];
+$tautan_syarat = [];
+$id_belum_terima = $sy['id_masalah']['rental_belum_terima'][0] ?? 0;
+$id_dikembalikan = $sy['id_masalah']['rental_dikembalikan'][0] ?? 0;
+if ($bisa_ubah && $id_belum_terima && boleh('rental.kelola')) {
+    $tautan_syarat['rental_belum_terima'] = ' <a class="tautan-kecil" data-tautan-rental href="' . e(url('pages/perlengkapan.php?tab=eksternal&sumber=Rental&status=Dikonfirmasi&q=' . rawurlencode($proyek['kode']) . '#alokasi-' . $id_belum_terima)) . '">Kelola penerimaan rental</a>';
+}
+if ($bisa_ubah && $id_dikembalikan) {
+    $tautan_syarat['rental_dikembalikan'] = ' Alokasi tersebut tidak bisa dipakai untuk persiapan proyek dan tidak bisa diterima ulang. <a class="tautan-kecil" data-tautan-tinjau href="' . e(url('pages/proyek-detail.php?id=' . $pid . '&tab=kebutuhan#alokasi-' . $id_dikembalikan)) . '">Tinjau di Kebutuhan &amp; Alokasi</a>';
+}
+?>
 <section class="kartu">
 <div class="kartu-kepala">
 <div>
 <h2>Persiapan barang</h2>
-<p>Batas <?= e(tgl($proyek['deadline_persiapan'], 'lengkap')) ?><?= $persiapan['diperbarui_pada'] ? ' · diperbarui ' . e(tgl($persiapan['diperbarui_pada'], 'singkat_jam')) . ' oleh ' . e(nama_pengguna($persiapan['diperbarui_oleh'])) : '' ?></p>
+<p>Batas <?= e(tgl($proyek['deadline_persiapan'], 'lengkap')) ?><?= $persiapan['diperbarui_pada'] ? ' · progres disimpan ' . e(tgl($persiapan['diperbarui_pada'], 'singkat_jam')) . ' oleh ' . e(nama_pengguna($persiapan['diperbarui_oleh'])) : '' ?></p>
 </div>
 <div class="aksi-baris">
-<?= badge($persiapan['status']) ?>
+<?= badge($np['status']) ?>
 <?= $persiapan['lewat'] ? badge('Lewat deadline') : '' ?>
 </div>
+</div>
+<div class="persiapan-status" data-status-persiapan>
+<?php if ($np['dikonfirmasi_pada']): ?>
+<div class="pemberitahuan pemberitahuan-sukses" role="status"><?= ikon('circle-check') ?><div>
+<p><strong>Persiapan Dikonfirmasi Selesai</strong></p>
+<p data-konfirmasi-oleh>Dikonfirmasi oleh <?= e(nama_pengguna($np['dikonfirmasi_oleh'])) ?> · <?= e(tgl($np['dikonfirmasi_pada'], 'lengkap')) ?><?= $np['dikonfirmasi_pada'] > $proyek['deadline_persiapan'] ? ' (setelah batas persiapan)' : '' ?></p>
+<p class="kecil"><?= e('Konfirmasi ini bukan pencatatan barang keluar. ' . (!$bisa_ubah ? 'Proyek berstatus ' . $proyek['status'] . '; konfirmasi disimpan sebagai riwayat.' : ($np['beku'] ? $sy['sudah_keluar'] . ' unit studio sudah tercatat keluar, jadi konfirmasi tidak bisa dibuka ulang.' : 'Kebutuhan, alokasi, dan checklist dikunci selama konfirmasi berlaku.'))) ?></p>
+</div></div>
+<?php if ($np['beku'] && $sy['masalah']): ?>
+<div class="pemberitahuan pemberitahuan-peringatan" role="status"><?= ikon('triangle-alert') ?><div><p><strong>Kondisi berubah setelah barang mulai keluar</strong></p><ul class="daftar-syarat"><?php foreach ($sy['masalah'] as $m): ?><li><?= e($m) ?></li><?php endforeach; ?></ul></div></div>
+<?php endif; ?>
+<?php if ($kelola_p && $np['boleh_buka']): ?>
+<div class="persiapan-tombol"><?= tombol_modal('dialog-buka-persiapan', 'Buka ulang persiapan', [], 'rotate-ccw', 'btn btn-sekunder btn-kecil') ?></div>
+<?php endif; ?>
+<?php elseif ($np['status'] === 'Siap untuk Dikonfirmasi'): ?>
+<div class="pemberitahuan pemberitahuan-info" role="status"><?= ikon('info') ?><div>
+<p><strong>Siap untuk Dikonfirmasi</strong></p>
+<p>Semua syarat terpenuhi menurut perhitungan sistem: <?= $sy['kebutuhan'] ?> kebutuhan, <?= $sy['memenuhi'] ?> alokasi diperiksa. Konfirmasi akhir belum diberikan.</p>
+</div></div>
+<?php if ($kelola_p): ?>
+<div class="persiapan-tombol"><?= tombol_modal('dialog-konfirmasi-persiapan', 'Konfirmasi Persiapan Selesai', [], 'circle-check', 'btn') ?></div>
+<?php endif; ?>
+<?php else: ?>
+<div class="pemberitahuan pemberitahuan-peringatan" role="status"><?= ikon('triangle-alert') ?><div>
+<p><strong><?= e($np['status']) ?></strong><?= $bisa_ubah ? ' · selesaikan dulu sebelum konfirmasi:' : '' ?></p>
+<ul class="daftar-syarat" data-syarat-persiapan><?php foreach ($np['masalah_kunci'] as $kunci_m => $m): ?><li><?= e($m) ?><?= $tautan_syarat[$kunci_m] ?? '' ?></li><?php endforeach; ?></ul>
+</div></div>
+<?php endif; ?>
+<?php if (!$np['dikonfirmasi_pada'] && $batal_p): ?>
+<?php $teks_batal = 'Konfirmasi sebelumnya oleh ' . nama_pengguna($batal_p['dikonfirmasi_oleh']) . ' (' . tgl($batal_p['dikonfirmasi_pada'], 'singkat_jam') . ') ' . ($batal_p['otomatis'] ? 'tidak berlaku lagi' : 'dibuka ulang oleh ' . nama_pengguna($batal_p['oleh'])) . ' pada ' . tgl($batal_p['pada'], 'singkat_jam') . ': ' . $batal_p['alasan']; ?>
+<?php if ($kelola_p): ?>
+<div class="pemberitahuan pemberitahuan-info" role="status" data-tinjau-ulang><?= ikon('rotate-ccw') ?><div>
+<p data-konfirmasi-batal><?= e($teks_batal) ?></p>
+<p class="kecil">Checklist sebelumnya masih tersimpan (<?= $persiapan['selesai'] ?> dari <?= $persiapan['total'] ?> diperiksa), tetapi belum berarti persiapan selesai. Tinjau ulang setiap barang terhadap kondisi terbaru, simpan progres bila ada perubahan, lalu konfirmasi kembali. Sistem tidak mengonfirmasi ulang secara otomatis meskipun checklist 100%.</p>
+</div></div>
+<?php else: ?>
+<p class="kecil redup" data-konfirmasi-batal><?= e($teks_batal) ?></p>
+<?php endif; ?>
+<?php endif; ?>
 </div>
 <?php if (!$persiapan['item']): ?>
 <?= kosong('Belum ada barang untuk disiapkan', 'Daftar periksa muncul setelah kebutuhan dialokasikan.') ?>
 <?php else: ?>
-<?php $bisa_centang = boleh('persiapan.kelola') && $bisa_ubah; ?>
 <form method="post" class="persiapan" data-persiapan>
 <?= csrf_field() ?>
 <input type="hidden" name="aksi" value="simpan_persiapan">
 <div class="persiapan-progres">
 <div class="progres progres-besar">
 <?= bilah($persiapan['persen'], $persiapan['lewat'] ? 'merah' : 'tinta') ?>
-<span><strong data-progres-angka><?= $persiapan['selesai'] ?></strong> dari <?= $persiapan['total'] ?> diperiksa</span>
+<span><strong data-progres-angka><?= $persiapan['selesai'] ?></strong> dari <?= $persiapan['total'] ?> diperiksa · <span data-progres-persen><?= $persiapan['persen'] ?></span>%</span>
 </div>
+<dl class="info-ringkas info-persiapan" data-ringkas-syarat>
+<div><dt>Pemeriksaan</dt><dd><span data-status-periksa><?= $persiapan['selesai'] === 0 ? 'Belum ada barang yang diperiksa' : ($persiapan['selesai'] < $persiapan['total'] ? 'Sebagian barang sudah diperiksa' : 'Semua barang sudah diperiksa') ?></span><?= $bisa_centang ? '<span class="teks-kuning" data-belum-disimpan hidden> · centang berubah dan belum disimpan; kesiapan dihitung ulang setelah Simpan progres</span>' : '' ?></dd></div>
+<div><dt>Kesiapan</dt><dd><?= $sy['memenuhi'] ?> dari <?= $sy['alokasi'] ?> alokasi memenuhi syarat · belum memenuhi syarat: <?= $sy['kebutuhan_bermasalah'] ?> kebutuhan, <?= $sy['alokasi_bermasalah'] ?> alokasi</dd></div>
+<div><dt>Konfirmasi</dt><dd><?= $np['dikonfirmasi_pada'] ? 'Dikonfirmasi selesai oleh ' . e(nama_pengguna($np['dikonfirmasi_oleh'])) . ' · ' . e(tgl($np['dikonfirmasi_pada'], 'singkat_jam')) : ($bisa_ubah ? 'Belum dikonfirmasi' : 'Tidak dikonfirmasi · proyek ' . e($proyek['status'])) ?></dd></div>
+</dl>
 <?php $catatan_p = array_filter([$persiapan['menunggu'] > 0 ? $persiapan['menunggu'] . ' alokasi masih Direncanakan' : '', $persiapan['menunggu_vendor'] > 0 ? $persiapan['menunggu_vendor'] . ' rental menunggu penerimaan vendor' : '', $persiapan['kurang'] > 0 ? $persiapan['kurang'] . ' unit kebutuhan belum dialokasikan' : '']); ?>
 <?php if ($catatan_p): ?>
 <p class="kecil teks-kuning"><?= e(implode(' · ', $catatan_p)) ?></p>
@@ -573,7 +707,7 @@ require ROOT . '/includes/layout_head.php';
 <span class="ceklist-kotak" aria-hidden="true"><?= ikon('check', 14) ?></span>
 <span class="daftar-utama">
 <span class="daftar-judul"><?= e(nama_barang_alokasi($a)) ?><?= jumlah_alokasi($a) > 1 ? ' × ' . jumlah_alokasi($a) : '' ?></span>
-<span class="daftar-sub"><?= e(keterangan_sumber($a)) ?> · untuk <?= e($k['nama'] ?? '—') ?><?= $menunggu ? ' · <span class="teks-kuning">' . e($tunggu_vendor ? 'Menunggu penerimaan vendor' : label_status_alokasi($a)) . ', belum bisa diperiksa' . (in_array((int) $a['id'], $persiapan['centang_tertahan'], true) ? ' (centang lama tersimpan, belum berlaku)' : '') . '</span>' : '' ?></span>
+<span class="daftar-sub"><?= e(keterangan_sumber($a)) ?> · untuk <?= e($k['nama'] ?? '—') ?><?= $menunggu ? ' · <span class="teks-kuning">' . e($tunggu_vendor ? 'Menunggu penerimaan vendor' : label_status_alokasi($a)) . ', belum bisa diperiksa' . (in_array((int) $a['id'], $persiapan['centang_tertahan'], true) ? ' (centang lama tersimpan, belum berlaku)' : '') . '</span>' : '' ?><?= $a['sumber'] === 'Rental' && !empty($a['dikembalikan_vendor_pada']) ? ' · <span class="teks-kuning">sudah dikembalikan ke vendor' . ($bisa_ubah ? ', tidak bisa dipakai untuk persiapan proyek ini' : '') . '</span>' : '' ?></span>
 </span>
 <span class="sumber sumber-<?= e(strtolower(str_replace(' ', '-', $a['sumber']))) ?>"><?= e($a['sumber']) ?></span>
 </label>
@@ -582,9 +716,11 @@ require ROOT . '/includes/layout_head.php';
 </ul>
 <?php if ($bisa_centang): ?>
 <div class="kartu-kaki">
-<p class="kecil redup">Centang barang yang sudah dicek fisik dan siap dibawa. Untuk Rental dan Kru, centang ini dicatat sebagai pemeriksaan petugas, belum bukti penerimaan dari vendor atau serah terima.</p>
-<button type="submit" class="btn">Simpan persiapan</button>
+<p class="kecil redup">Centang barang yang sudah dicek fisik, lalu simpan progres kapan saja. Untuk Rental dan Kru, centang ini dicatat sebagai pemeriksaan petugas, bukan bukti penerimaan vendor atau serah terima. Checklist lengkap belum berarti persiapan dikonfirmasi.</p>
+<button type="submit" class="btn">Simpan progres</button>
 </div>
+<?php elseif ($kelola_p && $np['terkunci']): ?>
+<div class="kartu-kaki"><p class="kecil redup">Checklist dikunci karena persiapan sudah dikonfirmasi selesai.</p></div>
 <?php endif; ?>
 </form>
 <?php endif; ?>
@@ -659,10 +795,13 @@ if (boleh('proyek.kelola')) {
 if (boleh('anggota.kelola') && $bisa_ubah) {
     require ROOT . '/partials/modal_anggota.php';
 }
-if (boleh('kebutuhan.kelola') && $bisa_ubah) {
+if (boleh('kebutuhan.kelola') && $ubah_kebutuhan) {
     require ROOT . '/partials/modal_kebutuhan.php';
 }
-if (boleh('alokasi.kelola') && $bisa_ubah && $tab === 'kebutuhan') {
+if (boleh('persiapan.kelola') && $bisa_ubah && $tab === 'persiapan') {
+    require ROOT . '/partials/modal_persiapan.php';
+}
+if (boleh('alokasi.kelola') && $ubah_kebutuhan && $tab === 'kebutuhan') {
     foreach ($kebutuhan as $kd) {
         if (pemenuhan_kebutuhan($kd)['terisi'] < $kd['jumlah']) {
             require ROOT . '/partials/modal_alokasi.php';
