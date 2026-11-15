@@ -43,6 +43,7 @@ function indeks_serah(): array
         $kunci = $trx['jenis'] === 'Keluar' ? 'keluar' : 'kembali';
         $cache[$detail['alokasi_id']][$kunci] = $trx['waktu'];
         $cache[$detail['alokasi_id']]['trx_' . $kunci] = $trx['id'];
+        $cache[$detail['alokasi_id']]['jumlah_' . $kunci] = max(1, (int) ($detail['jumlah'] ?? 1));
         if ($kunci === 'kembali') {
             $cache[$detail['alokasi_id']]['kondisi_kembali'] = $detail['kondisi'];
         }
@@ -297,6 +298,7 @@ function daftar_barang_eksternal(): array
             'centang_tersimpan' => in_array((int) $alokasi['id'], $diperiksa[$pid], true),
             'diperiksa_aktif' => alokasi_siap($alokasi, $diperiksa[$pid]),
             'proyek_aktif' => $proyek && proyek_aktif($proyek),
+            'serah' => serah_alokasi((int) $alokasi['id']),
         ];
     }
     usort($hasil, fn ($a, $b) => [$a['alokasi']['status'] === 'Dibatalkan', !$a['proyek_aktif'], $a['alokasi']['tgl_mulai'], $a['alokasi']['id']]
@@ -345,6 +347,7 @@ function info_rental(array $alokasi): array
     $dikembalikan = $alokasi['dikembalikan_vendor_pada'] ?? null;
     $sisa = $jatuh_tempo ? (int) round((strtotime($jatuh_tempo) - strtotime(HARI_INI)) / 86400) : null;
     $batal = $alokasi['status'] === 'Dibatalkan';
+    $dipakai = isset($alokasi['id']) && sedang_keluar($alokasi);
     if ($batal) {
         $status = '';
         $ket = 'Alokasi dibatalkan';
@@ -376,7 +379,8 @@ function info_rental(array $alokasi): array
         'dikembalikan' => $dikembalikan !== null,
         'bisa_terima' => $alokasi['status'] === 'Dikonfirmasi' && $diterima === null,
         'bisa_tempo' => !$batal && $dikembalikan === null,
-        'bisa_kembali' => !$batal && $diterima !== null && $dikembalikan === null,
+        'bisa_kembali' => !$batal && $diterima !== null && $dikembalikan === null && !$dipakai,
+        'dipakai_proyek' => $dipakai,
     ];
 }
 
@@ -409,6 +413,11 @@ function proses_aksi_rental(string $aksi, array $alokasi, array $pengguna): arra
         $terima = $aksi === 'terima_rental';
         if ($terima && !$info['bisa_terima']) {
             return ['umum' => $info['diterima'] ? $nama . ' sudah tercatat diterima pada ' . tgl($alokasi['diterima_pada'], 'lengkap') . '.' : 'Penerimaan hanya untuk alokasi Rental yang sudah Dikonfirmasi.'];
+        }
+        if (!$terima && $info['dipakai_proyek']) {
+            $serah = serah_alokasi((int) $alokasi['id']);
+            $trx = db_cari('transaksi', $serah['trx_keluar'] ?? 0);
+            return ['umum' => $nama . ' masih tercatat digunakan proyek ' . (db_cari('proyek', (int) $alokasi['proyek_id'])['kode'] ?? '?') . ' (barang keluar ' . ($trx['kode'] ?? '?') . ', ' . tgl($serah['keluar'], 'lengkap') . '). Catat pengembalian dari proyek terlebih dahulu. Pencatatan pengembalian Rental dari proyek belum tersedia, jadi rental ini belum bisa dikembalikan ke vendor.'];
         }
         if (!$terima && !$info['bisa_kembali']) {
             return ['umum' => $info['dikembalikan'] ? $nama . ' sudah tercatat dikembalikan ke vendor pada ' . tgl($alokasi['dikembalikan_vendor_pada'], 'lengkap') . '.' : $nama . ' belum tercatat diterima dari vendor, jadi belum bisa dikembalikan.'];

@@ -235,7 +235,7 @@ function pemenuhan_kebutuhan(array $kebutuhan): array
     $proyek = db_cari('proyek', (int) $kebutuhan['proyek_id']);
     $aktif = $proyek && proyek_aktif($proyek);
     $hasil = ['dialokasikan' => 0, 'direncanakan' => 0, 'dikonfirmasi' => 0, 'diperiksa' => 0, 'siap' => 0, 'siap_eksternal' => 0, 'eksternal' => 0,
-        'keluar' => 0, 'di_luar' => 0, 'terlambat' => 0, 'kembali' => 0, 'kembali_bermasalah' => 0];
+        'eksternal_keluar' => 0, 'keluar' => 0, 'di_luar' => 0, 'terlambat' => 0, 'kembali' => 0, 'kembali_bermasalah' => 0];
     foreach (alokasi_kebutuhan($kebutuhan['id']) as $alokasi) {
         if ($alokasi['status'] === 'Dibatalkan') {
             continue;
@@ -262,6 +262,9 @@ function pemenuhan_kebutuhan(array $kebutuhan): array
         $serah = serah_alokasi($alokasi['id']);
         if (isset($serah['keluar'])) {
             $hasil['keluar'] += $qty;
+            if ($alokasi['sumber'] !== 'Studio') {
+                $hasil['eksternal_keluar'] += $qty;
+            }
             if (isset($serah['kembali'])) {
                 $hasil['kembali'] += $qty;
                 if (($serah['kondisi_kembali'] ?? 'Baik') !== 'Baik') {
@@ -311,12 +314,12 @@ function rincian_pemenuhan(array $p): string
         }
     }
     if ($p['keluar'] > 0) {
-        $teks .= ' · unit Studio keluar ' . $p['keluar'] . ': di luar ' . $p['di_luar'] . ', kembali ' . $p['kembali'];
+        $teks .= ' · unit keluar ' . $p['keluar'] . ': di luar ' . $p['di_luar'] . ', kembali ' . $p['kembali'];
         if ($p['kembali_bermasalah'] > 0) {
             $teks .= ' (' . $p['kembali_bermasalah'] . ' Rusak/Maintenance)';
         }
-        if ($p['eksternal'] > 0) {
-            $teks .= ' · Rental/Kru belum dicatat di serah terima';
+        if ($p['eksternal'] > $p['eksternal_keluar']) {
+            $teks .= ' · ' . ($p['eksternal'] - $p['eksternal_keluar']) . ' unit Rental/Kru belum keluar';
         }
     }
     return $teks;
@@ -460,6 +463,9 @@ function syarat_persiapan(array $proyek): array
         $h['alokasi']++;
         $k = $kebutuhan[(int) $a['kebutuhan_id']] ?? null;
         $keluar = isset(serah_alokasi($a['id'])['keluar']);
+        if ($keluar) {
+            $h['sudah_keluar']++;
+        }
         $unit = $a['sumber'] === 'Studio' ? db_cari('perlengkapan', (int) $a['perlengkapan_id']) : null;
         $lain = $unit && !$keluar ? alokasi_keluar_unit((int) $unit['id']) : null;
         $masalah = '';
@@ -489,9 +495,6 @@ function syarat_persiapan(array $proyek): array
         }
         $h['memenuhi']++;
         $h['unit_sumber'][$a['sumber']] += jumlah_alokasi($a);
-        if ($keluar) {
-            $h['sudah_keluar']++;
-        }
     }
     $pesan = [];
     if (!proyek_aktif($proyek)) {
@@ -534,7 +537,7 @@ function penilaian_persiapan(array $proyek): array
     $aktif = proyek_aktif($proyek);
     $masalah_kunci = $syarat['masalah_kunci'];
     if (!$pada && $aktif && $syarat['sudah_keluar'] > 0) {
-        $masalah_kunci['data_lama'] = $syarat['sudah_keluar'] . ' unit studio sudah tercatat keluar sebelum ada konfirmasi persiapan (data lama). Konfirmasi baru tidak dibuat agar urutan transaksi tetap jujur.';
+        $masalah_kunci['data_lama'] = $syarat['sudah_keluar'] . ' alokasi barang sudah tercatat keluar sebelum ada konfirmasi persiapan (data lama). Konfirmasi baru tidak dibuat agar urutan transaksi tetap jujur.';
     }
     $masalah = array_values($masalah_kunci);
     if ($pada) {

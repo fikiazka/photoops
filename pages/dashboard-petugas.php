@@ -6,10 +6,7 @@ if ($pengguna['peran'] !== 'pi') {
 }
 
 $siap = proyek_siap_keluar();
-$jumlah_siap = 0;
-foreach ($siap as $s) {
-    $jumlah_siap += count(array_filter($s['unit'], fn ($u) => $u['blokir'] === ''));
-}
+$jumlah_siap = array_sum(array_column($siap, 'bisa_unit'));
 $belum_kembali = unit_belum_kembali();
 $tempo_dekat = array_filter($belum_kembali, fn ($b) => $b['status'] !== 'Dipinjam');
 $terbuka = insiden_terbuka();

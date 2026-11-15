@@ -26,30 +26,120 @@ function hari_terlambat(array $alokasi): int
     return max(0, (int) ((strtotime(HARI_INI) - strtotime($alokasi['tgl_selesai'])) / 86400));
 }
 
-function unit_siap_keluar(int $proyek_id): array
+function jumlah_detail(array $detail): int
 {
+    return max(1, (int) ($detail['jumlah'] ?? 1));
+}
+
+function gerbang_keluar(array $proyek): array
+{
+    $np = penilaian_persiapan($proyek);
+    if (!proyek_aktif($proyek)) {
+        return ['boleh' => false, 'alasan' => 'Proyek ' . $proyek['kode'] . ' berstatus ' . $proyek['status'] . ', jadi barang tidak bisa dikeluarkan lagi. Pengembalian barang yang masih di luar tetap bisa dicatat.', 'nilai' => $np];
+    }
+    if (!$np['dikonfirmasi_pada']) {
+        if ($np['syarat']['sudah_keluar'] > 0) {
+            $alasan = 'Barang proyek ini sudah tercatat keluar sebelum ada konfirmasi persiapan (data lama). Barang keluar baru tidak bisa dicatat karena persiapannya tidak pernah dikonfirmasi; pengembalian unit studio tetap bisa dicatat.';
+        } elseif ($np['konfirmasi_batal']) {
+            $alasan = 'Konfirmasi persiapan sebelumnya ' . ($np['konfirmasi_batal']['otomatis'] ? 'tidak berlaku lagi' : 'sudah dibuka ulang') . '. Konfirmasi ulang di tab Persiapan sebelum barang dikeluarkan.';
+        } elseif ($np['status'] === 'Siap untuk Dikonfirmasi') {
+            $alasan = 'Checklist dan syarat sudah terpenuhi, tetapi persiapan belum dikonfirmasi selesai. Konfirmasi di tab Persiapan terlebih dahulu.';
+        } else {
+            $alasan = 'Persiapan belum dikonfirmasi selesai (' . $np['status'] . '). Selesaikan persiapan lalu konfirmasi di tab Persiapan.';
+        }
+        return ['boleh' => false, 'alasan' => $alasan, 'nilai' => $np];
+    }
+    if ($np['perlu_cabut']) {
+        return ['boleh' => false, 'alasan' => 'Konfirmasi persiapan tidak berlaku lagi karena data berubah: ' . implode(' ', $np['syarat']['masalah']), 'nilai' => $np];
+    }
+    return ['boleh' => true, 'alasan' => '', 'nilai' => $np];
+}
+
+function alasan_tidak_bisa_keluar(array $alokasi, array $diperiksa): string
+{
+    if ($alokasi['status'] === 'Dibatalkan') {
+        return 'Alokasi dibatalkan';
+    }
+    $serah = serah_alokasi((int) $alokasi['id']);
+    if (isset($serah['keluar'])) {
+        $trx = db_cari('transaksi', $serah['trx_keluar'] ?? 0);
+        return isset($serah['kembali']) ? 'Sudah keluar dan sudah dikembalikan' : 'Sudah tercatat keluar' . ($trx ? ' (' . $trx['kode'] . ')' : '');
+    }
+    if ($alokasi['status'] !== 'Dikonfirmasi') {
+        return 'Alokasi belum dikonfirmasi';
+    }
+    $pid = (int) $alokasi['proyek_id'];
+    if (!alokasi_sesuai_kebutuhan($alokasi, db_cari('kebutuhan', (int) $alokasi['kebutuhan_id']), $pid)) {
+        return 'Tidak sesuai dengan kebutuhan proyek';
+    }
+    if ($alokasi['sumber'] === 'Studio') {
+        $unit = db_cari('perlengkapan', (int) $alokasi['perlengkapan_id']);
+        if (!$unit) {
+            return 'Unit sudah dihapus';
+        }
+        if ($unit['status_aktif'] !== 'Aktif') {
+            return 'Unit nonaktif';
+        }
+        if ($unit['kondisi'] !== 'Baik') {
+            return 'Kondisi ' . $unit['kondisi'];
+        }
+        $lain = alokasi_keluar_unit((int) $unit['id']);
+        if ($lain) {
+            return 'Masih keluar di ' . (db_cari('proyek', $lain['proyek_id'])['kode'] ?? '?');
+        }
+    }
+    if ($alokasi['sumber'] === 'Rental') {
+        if (empty($alokasi['diterima_pada'])) {
+            return 'Belum tercatat diterima dari vendor';
+        }
+        if (!empty($alokasi['dikembalikan_vendor_pada'])) {
+            return 'Sudah dikembalikan ke vendor';
+        }
+    }
+    if (!in_array((int) $alokasi['id'], $diperiksa, true)) {
+        return 'Belum diperiksa di persiapan';
+    }
+    return '';
+}
+
+function alokasi_siap_keluar(int $proyek_id): array
+{
+    $diperiksa = id_diperiksa($proyek_id);
     $hasil = [];
     foreach (alokasi_proyek($proyek_id, true) as $alokasi) {
-        if ($alokasi['sumber'] !== 'Studio' || isset(serah_alokasi($alokasi['id'])['keluar'])) {
+        if (isset(serah_alokasi((int) $alokasi['id'])['keluar'])) {
             continue;
         }
-        $unit = db_cari('perlengkapan', (int) $alokasi['perlengkapan_id']);
-        $blokir = '';
-        if ($alokasi['status'] !== 'Dikonfirmasi') {
-            $blokir = 'Alokasi belum dikonfirmasi';
-        } elseif (!$unit) {
-            $blokir = 'Unit sudah dihapus';
-        } elseif ($unit['kondisi'] !== 'Baik') {
-            $blokir = 'Kondisi ' . $unit['kondisi'];
-        } else {
-            $keluar = alokasi_keluar_unit($unit['id']);
-            if ($keluar) {
-                $blokir = 'Masih keluar di ' . (db_cari('proyek', $keluar['proyek_id'])['kode'] ?? '?');
-            }
-        }
-        $hasil[] = ['alokasi' => $alokasi, 'unit' => $unit, 'blokir' => $blokir];
+        $hasil[] = [
+            'alokasi' => $alokasi,
+            'unit' => $alokasi['sumber'] === 'Studio' ? db_cari('perlengkapan', (int) $alokasi['perlengkapan_id']) : null,
+            'jumlah' => jumlah_alokasi($alokasi),
+            'blokir' => alasan_tidak_bisa_keluar($alokasi, $diperiksa),
+        ];
     }
     return $hasil;
+}
+
+function hitung_per_sumber(array $baris, bool $hanya_bisa = false): array
+{
+    $hasil = ['Studio' => 0, 'Rental' => 0, 'Milik Kru' => 0];
+    foreach ($baris as $b) {
+        if (!$hanya_bisa || ($b['blokir'] ?? '') === '') {
+            $hasil[$b['alokasi']['sumber']] += $b['jumlah'] ?? jumlah_alokasi($b['alokasi']);
+        }
+    }
+    return $hasil;
+}
+
+function teks_per_sumber(array $per_sumber): string
+{
+    $bagian = [];
+    foreach ($per_sumber as $sumber => $jumlah) {
+        if ($jumlah > 0) {
+            $bagian[] = $sumber . ' ' . $jumlah;
+        }
+    }
+    return implode(', ', $bagian);
 }
 
 function unit_belum_kembali(?int $proyek_id = null): array
@@ -63,6 +153,26 @@ function unit_belum_kembali(?int $proyek_id = null): array
             continue;
         }
         $hasil[] = ['alokasi' => $alokasi, 'unit' => db_cari('perlengkapan', (int) $alokasi['perlengkapan_id']), 'status' => status_keluar($alokasi), 'keluar' => serah_alokasi($alokasi['id'])['keluar']];
+    }
+    usort($hasil, fn ($a, $b) => strcmp($a['alokasi']['tgl_selesai'], $b['alokasi']['tgl_selesai']));
+    return $hasil;
+}
+
+function barang_di_luar(?int $proyek_id = null): array
+{
+    $hasil = [];
+    foreach (db('alokasi') as $alokasi) {
+        if (!sedang_keluar($alokasi) || ($proyek_id !== null && (int) $alokasi['proyek_id'] !== $proyek_id)) {
+            continue;
+        }
+        $serah = serah_alokasi((int) $alokasi['id']);
+        $hasil[] = [
+            'alokasi' => $alokasi,
+            'unit' => $alokasi['sumber'] === 'Studio' ? db_cari('perlengkapan', (int) $alokasi['perlengkapan_id']) : null,
+            'jumlah' => $serah['jumlah_keluar'] ?? jumlah_alokasi($alokasi),
+            'status' => status_keluar($alokasi),
+            'keluar' => $serah['keluar'],
+        ];
     }
     usort($hasil, fn ($a, $b) => strcmp($a['alokasi']['tgl_selesai'], $b['alokasi']['tgl_selesai']));
     return $hasil;
@@ -86,10 +196,19 @@ function proyek_siap_keluar(): array
         if (!proyek_aktif($proyek)) {
             continue;
         }
-        $unit = unit_siap_keluar($proyek['id']);
-        if ($unit) {
-            $hasil[$proyek['id']] = ['proyek' => $proyek, 'unit' => $unit];
+        $unit = alokasi_siap_keluar((int) $proyek['id']);
+        if (!$unit) {
+            continue;
         }
+        $gerbang = gerbang_keluar($proyek);
+        $bisa = $gerbang['boleh'] ? array_values(array_filter($unit, fn ($u) => $u['blokir'] === '')) : [];
+        $hasil[$proyek['id']] = [
+            'proyek' => $proyek,
+            'unit' => $unit,
+            'gerbang' => $gerbang,
+            'bisa_alokasi' => count($bisa),
+            'bisa_unit' => array_sum(array_column($bisa, 'jumlah')),
+        ];
     }
     return $hasil;
 }
@@ -98,28 +217,36 @@ function penerima_proyek(int $proyek_id): array
 {
     $hasil = [];
     foreach (anggota_proyek($proyek_id) as $anggota) {
-        $hasil[$anggota['pengguna']['nama']] = $anggota['pengguna']['nama'] . ' · ' . $anggota['peran'];
+        if ($anggota['pengguna']['status'] === 'Aktif') {
+            $hasil[(string) $anggota['pengguna']['id']] = $anggota['pengguna']['nama'] . ' · ' . $anggota['peran'];
+        }
     }
     return $hasil;
 }
 
-function proses_checkout(array $proyek, array $alokasi_ids, string $penerima, string $catatan): string
+function proses_checkout(array $proyek, array $item, array $penerima, string $waktu, string $catatan): array
 {
     $kode = kode_transaksi_baru();
     $trx_id = db_tambah('transaksi', [
         'kode' => $kode,
         'proyek_id' => $proyek['id'],
         'jenis' => 'Keluar',
-        'waktu' => date('Y-m-d H:i', strtotime(sekarang())),
+        'waktu' => $waktu,
         'petugas_id' => $_SESSION['user_id'] ?? null,
-        'penerima' => $penerima,
+        'penerima' => $penerima['nama'],
+        'penerima_id' => (int) $penerima['id'],
         'catatan' => $catatan,
+        'dicatat_pada' => date('Y-m-d H:i', strtotime(sekarang())),
     ]);
-    foreach ($alokasi_ids as $id) {
-        db_tambah('detail_transaksi', ['transaksi_id' => $trx_id, 'alokasi_id' => $id, 'kondisi' => 'Baik']);
+    $per_sumber = ['Studio' => 0, 'Rental' => 0, 'Milik Kru' => 0];
+    foreach ($item as $baris) {
+        $alokasi = $baris['alokasi'];
+        db_tambah('detail_transaksi', ['transaksi_id' => $trx_id, 'alokasi_id' => (int) $alokasi['id'], 'kondisi' => 'Baik', 'jumlah' => $baris['jumlah'], 'sumber' => $alokasi['sumber']]);
+        $per_sumber[$alokasi['sumber']] += $baris['jumlah'];
     }
-    catat_riwayat('Barang Keluar', $proyek['kode'] . ' · ' . $kode, count($alokasi_ids) . ' unit diserahkan ke ' . $penerima);
-    return $kode;
+    $total = array_sum($per_sumber);
+    catat_riwayat('Barang Keluar', $proyek['kode'] . ' · ' . $kode, $total . ' unit diserahkan ke ' . $penerima['nama'] . ' (' . teks_per_sumber($per_sumber) . ')');
+    return ['kode' => $kode, 'total' => $total, 'per_sumber' => $per_sumber];
 }
 
 function proses_checkin(array $proyek, array $kondisi_per_alokasi, string $catatan): array
@@ -138,7 +265,7 @@ function proses_checkin(array $proyek, array $kondisi_per_alokasi, string $catat
     $bermasalah = [];
     foreach ($kondisi_per_alokasi as $alokasi_id => $kondisi) {
         $alokasi = db_cari('alokasi', (int) $alokasi_id);
-        db_tambah('detail_transaksi', ['transaksi_id' => $trx_id, 'alokasi_id' => (int) $alokasi_id, 'kondisi' => $kondisi]);
+        db_tambah('detail_transaksi', ['transaksi_id' => $trx_id, 'alokasi_id' => (int) $alokasi_id, 'kondisi' => $kondisi, 'jumlah' => 1, 'sumber' => 'Studio']);
         if (HARI_INI > $alokasi['tgl_selesai']) {
             $terlambat++;
         }
@@ -205,7 +332,7 @@ function tren_mingguan(int $minggu = 6): array
         $tanggal = substr($trx['waktu'], 0, 10);
         foreach ($hasil as $awal => $baris) {
             if ($tanggal >= $awal && $tanggal <= $baris['akhir']) {
-                $hasil[$awal][$trx['jenis']]++;
+                $hasil[$awal][$trx['jenis']] += jumlah_detail($detail);
                 break;
             }
         }

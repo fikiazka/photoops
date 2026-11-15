@@ -370,7 +370,7 @@ if (is_post()) {
             $s = $nilai_p['syarat'];
             db_ubah('persiapan', (int) $rekam['id'], ['dikonfirmasi_pada' => date('Y-m-d H:i', strtotime(sekarang())), 'dikonfirmasi_oleh' => $pengguna['id']]);
             catat_riwayat('Persiapan', $proyek['kode'], 'Persiapan dikonfirmasi selesai · ' . $s['kebutuhan'] . ' kebutuhan, ' . $s['memenuhi'] . ' alokasi (Studio ' . $s['unit_sumber']['Studio'] . ', Rental ' . $s['unit_sumber']['Rental'] . ', Milik Kru ' . $s['unit_sumber']['Milik Kru'] . ' unit)', 'Siap untuk Dikonfirmasi', 'Dikonfirmasi Selesai');
-            flash('sukses', 'Persiapan ' . $proyek['kode'] . ' dikonfirmasi selesai. Barang belum tercatat keluar; catat penyerahan unit studio di Serah Terima saat barang dibawa.');
+            flash('sukses', 'Persiapan ' . $proyek['kode'] . ' dikonfirmasi selesai. Barang belum tercatat keluar; catat penyerahan barang di Serah Terima saat barang dibawa.');
             muat_ulang();
         }
         if (!$nilai_p['dikonfirmasi_pada']) {
@@ -378,7 +378,7 @@ if (is_post()) {
             muat_ulang();
         }
         if ($nilai_p['beku']) {
-            flash('error', $nilai_p['syarat']['sudah_keluar'] . ' unit proyek ini sudah tercatat keluar di serah terima. Konfirmasi persiapan tidak bisa dibuka ulang agar riwayat transaksi tetap konsisten.');
+            flash('error', $nilai_p['syarat']['sudah_keluar'] . ' alokasi barang proyek ini sudah tercatat keluar di serah terima. Konfirmasi persiapan tidak bisa dibuka ulang agar riwayat transaksi tetap konsisten.');
             muat_ulang();
         }
         $alasan = input('alasan');
@@ -581,9 +581,9 @@ require ROOT . '/includes/layout_head.php';
 <?php if (alokasi_siap($a, $id_diperiksa)): ?>
 <?= $a['sumber'] === 'Studio' ? badge('Siap', 'Siap · diperiksa') : badge('Diperiksa Petugas') ?>
 <?php endif; ?>
-<?php if ($a['sumber'] === 'Studio' && isset($serah['kembali'])): ?>
+<?php if (isset($serah['kembali'])): ?>
 <?= ($serah['kondisi_kembali'] ?? 'Baik') === 'Baik' ? badge('Kembali') : badge($serah['kondisi_kembali'], 'Kembali · ' . $serah['kondisi_kembali']) ?>
-<?php elseif ($a['sumber'] === 'Studio' && isset($serah['keluar'])): ?>
+<?php elseif (isset($serah['keluar'])): ?>
 <?= badge(status_keluar($a), 'Keluar · ' . status_keluar($a)) ?>
 <?php endif; ?>
 </div>
@@ -640,13 +640,21 @@ if ($bisa_ubah && $id_dikembalikan) {
 <div class="pemberitahuan pemberitahuan-sukses" role="status"><?= ikon('circle-check') ?><div>
 <p><strong>Persiapan Dikonfirmasi Selesai</strong></p>
 <p data-konfirmasi-oleh>Dikonfirmasi oleh <?= e(nama_pengguna($np['dikonfirmasi_oleh'])) ?> · <?= e(tgl($np['dikonfirmasi_pada'], 'lengkap')) ?><?= $np['dikonfirmasi_pada'] > $proyek['deadline_persiapan'] ? ' (setelah batas persiapan)' : '' ?></p>
-<p class="kecil"><?= e('Konfirmasi ini bukan pencatatan barang keluar. ' . (!$bisa_ubah ? 'Proyek berstatus ' . $proyek['status'] . '; konfirmasi disimpan sebagai riwayat.' : ($np['beku'] ? $sy['sudah_keluar'] . ' unit studio sudah tercatat keluar, jadi konfirmasi tidak bisa dibuka ulang.' : 'Kebutuhan, alokasi, dan checklist dikunci selama konfirmasi berlaku.'))) ?></p>
+<p class="kecil"><?= e('Konfirmasi ini bukan pencatatan barang keluar. ' . (!$bisa_ubah ? 'Proyek berstatus ' . $proyek['status'] . '; konfirmasi disimpan sebagai riwayat.' : ($np['beku'] ? $sy['sudah_keluar'] . ' alokasi barang sudah tercatat keluar, jadi konfirmasi tidak bisa dibuka ulang.' : 'Kebutuhan, alokasi, dan checklist dikunci selama konfirmasi berlaku.'))) ?></p>
 </div></div>
 <?php if ($np['beku'] && $sy['masalah']): ?>
 <div class="pemberitahuan pemberitahuan-peringatan" role="status"><?= ikon('triangle-alert') ?><div><p><strong>Kondisi berubah setelah barang mulai keluar</strong></p><ul class="daftar-syarat"><?php foreach ($sy['masalah'] as $m): ?><li><?= e($m) ?></li><?php endforeach; ?></ul></div></div>
 <?php endif; ?>
+<?php $belum_keluar_p = $bisa_ubah ? count(alokasi_siap_keluar($pid)) : 0; ?>
+<?php if (($kelola_p && $np['boleh_buka']) || ($belum_keluar_p && boleh('serah_terima.kelola'))): ?>
+<div class="persiapan-tombol">
+<?php if ($belum_keluar_p && boleh('serah_terima.kelola')): ?>
+<a class="btn btn-kecil" data-tautan-keluar href="<?= e(url('pages/serah-terima.php#barang-keluar')) ?>"><?= ikon('arrow-up-right', 16) ?><span>Catat barang keluar (<?= $belum_keluar_p ?> alokasi)</span></a>
+<?php endif; ?>
 <?php if ($kelola_p && $np['boleh_buka']): ?>
-<div class="persiapan-tombol"><?= tombol_modal('dialog-buka-persiapan', 'Buka ulang persiapan', [], 'rotate-ccw', 'btn btn-sekunder btn-kecil') ?></div>
+<?= tombol_modal('dialog-buka-persiapan', 'Buka ulang persiapan', [], 'rotate-ccw', 'btn btn-sekunder btn-kecil') ?>
+<?php endif; ?>
+</div>
 <?php endif; ?>
 <?php elseif ($np['status'] === 'Siap untuk Dikonfirmasi'): ?>
 <div class="pemberitahuan pemberitahuan-info" role="status"><?= ikon('info') ?><div>
@@ -728,36 +736,52 @@ if ($bisa_ubah && $id_dikembalikan) {
 <?php endif; ?>
 
 <?php if ($tab === 'serah'): ?>
-<?php $unit_studio = array_filter(alokasi_proyek($pid, true), fn ($a) => $a['sumber'] === 'Studio'); ?>
+<?php
+$barang_p = alokasi_proyek($pid, true);
+$gerbang_p = gerbang_keluar($proyek);
+$jml_keluar_p = 0;
+$unit_keluar_p = 0;
+foreach ($barang_p as $bp) {
+    $sp = serah_alokasi($bp['id']);
+    if (isset($sp['keluar'])) {
+        $jml_keluar_p++;
+        $unit_keluar_p += $sp['jumlah_keluar'] ?? jumlah_alokasi($bp);
+    }
+}
+?>
 <section class="kartu">
 <div class="kartu-kepala">
 <div>
-<h2>Unit studio di proyek ini</h2>
-<p>Hanya unit inventaris studio yang dicatat keluar-masuk. Barang rental dan milik kru tidak ikut.</p>
+<h2>Barang di proyek ini</h2>
+<p data-ringkas-keluar><?= $jml_keluar_p ?> dari <?= count($barang_p) ?> alokasi sudah tercatat keluar (<?= $unit_keluar_p ?> unit). Studio, Rental, dan Milik Kru dicatat keluar di Serah Terima setelah persiapan dikonfirmasi; pengembalian Rental dan Milik Kru belum tersedia.</p>
 </div>
 <?php if (boleh('serah_terima.kelola')): ?>
 <a href="<?= e(url('pages/serah-terima.php')) ?>" class="btn btn-sekunder btn-kecil"><?= ikon('arrow-left-right', 16) ?><span>Buka serah terima</span></a>
 <?php endif; ?>
 </div>
-<?php if (!$unit_studio): ?>
-<?= kosong('Belum ada unit studio', 'Unit akan muncul setelah dialokasikan dari inventaris.') ?>
+<?php if ($bisa_ubah && !$gerbang_p['boleh'] && $jml_keluar_p < count($barang_p)): ?>
+<div class="pemberitahuan pemberitahuan-peringatan pemberitahuan-kartu" role="status" data-gerbang-proyek><?= ikon('triangle-alert') ?><span>Barang keluar belum bisa dicatat. <?= e($gerbang_p['alasan']) ?> <a class="tautan-kecil" href="<?= e(url('pages/proyek-detail.php?id=' . $pid . '&tab=persiapan')) ?>">Buka Persiapan</a></span></div>
+<?php endif; ?>
+<?php if (!$barang_p): ?>
+<?= kosong('Belum ada barang', 'Barang akan muncul setelah kebutuhan dialokasikan.') ?>
 <?php else: ?>
 <div class="tabel-wrap">
 <table class="tabel tabel-kartu">
-<thead><tr><th>Unit</th><th>Keluar</th><th>Jatuh tempo</th><th>Kembali</th><th>Status</th></tr></thead>
+<thead><tr><th>Barang</th><th class="angka">Jumlah</th><th>Keluar</th><th>Jatuh tempo</th><th>Kembali</th><th>Status</th></tr></thead>
 <tbody>
-<?php foreach ($unit_studio as $a): ?>
+<?php foreach ($barang_p as $a): ?>
 <?php $serah = serah_alokasi($a['id']); ?>
-<tr>
-<td data-label="Unit"><strong><?= e(keterangan_sumber($a)) ?></strong><div class="kecil redup"><?= e(nama_barang_alokasi($a)) ?></div></td>
-<td data-label="Keluar"><?= isset($serah['keluar']) ? e(tgl($serah['keluar'], 'singkat_jam')) : '<span class="redup">—</span>' ?></td>
+<tr id="serah-<?= (int) $a['id'] ?>">
+<td data-label="Barang"><strong class="teks-pecah"><?= e($a['sumber'] === 'Studio' ? keterangan_sumber($a) : nama_barang_alokasi($a)) ?></strong><div class="kecil redup teks-pecah"><span class="sumber sumber-<?= e(strtolower(str_replace(' ', '-', $a['sumber']))) ?>"><?= e($a['sumber']) ?></span> <?= e($a['sumber'] === 'Studio' ? nama_barang_alokasi($a) : keterangan_sumber($a)) ?></div></td>
+<td data-label="Jumlah" class="angka"><?= (int) ($serah['jumlah_keluar'] ?? jumlah_alokasi($a)) ?> unit</td>
+<td data-label="Keluar"><?php if (isset($serah['keluar'])): ?><?php $trx_s = db_cari('transaksi', $serah['trx_keluar'] ?? 0); ?><?= e(tgl($serah['keluar'], 'singkat_jam')) ?><div class="kecil redup"><?= e(($trx_s['kode'] ?? '?') . (!empty($trx_s['penerima']) ? ' · ' . $trx_s['penerima'] : '')) ?></div><?php else: ?><span class="redup">—</span><?php endif; ?></td>
 <td data-label="Jatuh tempo"><?= e(tgl($a['tgl_selesai'])) ?></td>
 <td data-label="Kembali"><?= isset($serah['kembali']) ? e(tgl($serah['kembali'], 'singkat_jam')) . ' · ' . e($serah['kondisi_kembali']) : '<span class="redup">—</span>' ?></td>
 <td data-label="Status">
 <?php if (isset($serah['kembali'])): ?>
 <?= badge(substr($serah['kembali'], 0, 10) > $a['tgl_selesai'] ? 'Terlambat' : 'Kembali', substr($serah['kembali'], 0, 10) > $a['tgl_selesai'] ? 'Kembali terlambat' : 'Kembali') ?>
 <?php elseif (isset($serah['keluar'])): ?>
-<?= badge(status_keluar($a)) ?>
+<?= badge(status_keluar($a), 'Keluar · ' . status_keluar($a)) ?>
 <?php else: ?>
 <?= badge($a['status'] === 'Dikonfirmasi' ? 'Menunggu' : $a['status'], $a['status'] === 'Dikonfirmasi' ? 'Belum keluar' : $a['status']) ?>
 <?php endif; ?>
@@ -779,7 +803,7 @@ if ($bisa_ubah && $id_dikembalikan) {
 <span class="ikon-bulat ikon-<?= $trx['jenis'] === 'Keluar' ? 'biru' : 'hijau' ?>"><?= ikon($trx['jenis'] === 'Keluar' ? 'arrow-up-right' : 'arrow-down-left', 16) ?></span>
 <div class="daftar-utama">
 <p class="daftar-judul"><?= e($trx['kode']) ?> · <?= e($trx['jenis'] === 'Keluar' ? 'Barang keluar' : 'Pengembalian') ?></p>
-<p class="daftar-sub"><?= e(tgl($trx['waktu'], 'lengkap')) ?> · <?= count($trx['detail']) ?> unit · <?= e($trx['jenis'] === 'Keluar' ? 'diterima ' . $trx['penerima'] : 'dicek ' . nama_pengguna($trx['petugas_id'])) ?></p>
+<p class="daftar-sub"><?= e(tgl($trx['waktu'], 'lengkap')) ?> · <?= array_sum(array_map('jumlah_detail', $trx['detail'])) ?> unit · <?= e($trx['jenis'] === 'Keluar' ? 'diterima ' . $trx['penerima'] : 'dicek ' . nama_pengguna($trx['petugas_id'])) ?></p>
 </div>
 </li>
 <?php endforeach; ?>
