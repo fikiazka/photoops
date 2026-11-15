@@ -345,7 +345,7 @@ function warna_status(string $status): string
     static $peta = [
         'hijau' => ['Selesai', 'Baik', 'Tersedia', 'Terpenuhi', 'Siap', 'Disetujui', 'Dikonfirmasi', 'Kembali', 'Aktif', 'Tepat waktu', 'Sudah Kembali', 'Studio Sudah Kembali', 'Sudah Dikembalikan', 'Diterima', 'Persiapan Dikonfirmasi Selesai'],
         'biru' => ['Dijadwalkan', 'Berlangsung', 'Dalam Persiapan', 'Belum Diperiksa', 'Diperiksa Petugas', 'Sedang Keluar', 'Dalam Masa Sewa', 'Siap untuk Dikonfirmasi', 'Ditangani', 'Dipinjam', 'Hari ini', 'Keluar', 'Petugas Inventaris'],
-        'kuning' => ['Maintenance', 'Sebagian', 'Menunggu', 'Menunggu Konfirmasi', 'Pengembalian Sebagian', 'Mendekati Jatuh Tempo', 'Tempo Vendor Lewat', 'Direncanakan', 'Belum Siap', 'Masih keluar'],
+        'kuning' => ['Maintenance', 'Sebagian', 'Menunggu', 'Menunggu Konfirmasi', 'Pengembalian Sebagian', 'Mendekati Jatuh Tempo', 'Tempo Vendor Lewat', 'Direncanakan', 'Belum Siap', 'Masih keluar', 'Kembali Sebagian'],
         'merah' => ['Terlambat', 'Rusak', 'Belum Kembali','Hilang', 'Dilaporkan', 'Bentrok', 'Belum Terpenuhi', 'Lewat deadline', 'Tidak Tersedia', 'Nonaktif'],
         'tinta' => ['PIC', 'Super Admin'],
     ];

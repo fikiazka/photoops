@@ -257,7 +257,9 @@ $sewa_pesan = array_filter([
 <span class="redup">—</span>
 <?php elseif (isset($b['serah']['keluar']) && !isset($b['serah']['kembali'])): ?>
 <?php $trx_k = db_cari('transaksi', $b['serah']['trx_keluar'] ?? 0); ?>
-<span data-dipakai-proyek><?= badge('Sedang Keluar', 'Dipakai proyek') ?> <span class="redup"><?= (int) ($b['serah']['jumlah_keluar'] ?? $b['jumlah']) ?> unit keluar <?= e(tgl($b['serah']['keluar'], 'singkat_jam')) ?> · <?= e($trx_k['kode'] ?? '?') ?><?= !empty($trx_k['penerima']) ? ' · diterima ' . e($trx_k['penerima']) : '' ?></span></span>
+<span data-dipakai-proyek><?= badge('Sedang Keluar', 'Dipakai proyek') ?><?= ($b['serah']['jumlah_kembali'] ?? 0) > 0 ? ' ' . badge('Kembali Sebagian') : '' ?> <span class="redup"><?= (int) ($b['serah']['jumlah_keluar'] ?? $b['jumlah']) ?> unit keluar <?= e(tgl($b['serah']['keluar'], 'singkat_jam')) ?> · <?= e($trx_k['kode'] ?? '?') ?><?= !empty($trx_k['penerima']) ? ' · diterima ' . e($trx_k['penerima']) : '' ?></span> <span data-saldo-proyek><?= (int) ($b['serah']['sisa'] ?? 0) ?> dari <?= (int) ($b['serah']['jumlah_keluar'] ?? 0) ?> unit masih di proyek<?= ($b['serah']['jumlah_kembali'] ?? 0) > 0 ? ' · ' . (int) $b['serah']['jumlah_kembali'] . ' sudah kembali (' . e(teks_kondisi($b['serah']['kondisi_rincian'] ?? [])) . ')' : '' ?></span></span>
+<?php elseif (isset($b['serah']['kembali'])): ?>
+<span data-kembali-proyek><?= badge('Sudah Kembali', 'Kembali dari proyek') ?> <span class="redup"><?= (int) $b['serah']['jumlah_kembali'] ?> unit · <?= e(teks_kondisi($b['serah']['kondisi_rincian'] ?? [])) ?> · <?= e(tgl($b['serah']['kembali'], 'singkat_jam')) ?></span> <span class="redup"><?= $a['sumber'] === 'Rental' ? (!empty($a['dikembalikan_vendor_pada']) ? 'Sudah dikembalikan ke vendor.' : 'Belum dikembalikan ke vendor; kewajiban vendor masih berjalan.') : 'Penyerahan ke pemilik tidak dicatat di aplikasi.' ?></span></span>
 <?php elseif ($a['status'] !== 'Dikonfirmasi'): ?>
 <span class="redup">Menunggu konfirmasi</span>
 <?php elseif (!alokasi_bisa_diperiksa($a)): ?>
@@ -283,7 +285,9 @@ $sewa_pesan = array_filter([
 <div class="kecil redup">Penerimaan: <?= $r['diterima'] ? 'diterima ' . e(tgl($a['diterima_pada'], 'singkat_jam')) . ' · ' . e($a['kondisi_terima'] ?? '') : 'belum diterima' ?></div>
 <div class="kecil redup">Ke vendor: <?= $r['dikembalikan'] ? 'dikembalikan ' . e(tgl($a['dikembalikan_vendor_pada'], 'singkat_jam')) . ' · ' . e($a['kondisi_kembali_vendor'] ?? '') : 'belum dikembalikan' ?></div>
 <?php if ($r['dipakai_proyek']): ?>
-<div class="kecil teks-kuning" data-kunci-vendor>Masih dipakai proyek. Kembalikan ke vendor baru bisa setelah pengembalian dari proyek dicatat.</div>
+<div class="kecil teks-kuning" data-kunci-vendor>Masih dipakai proyek: <?= (int) ($b['serah']['sisa'] ?? 0) ?> dari <?= (int) ($b['serah']['jumlah_keluar'] ?? 0) ?> unit belum kembali. Kembalikan ke vendor baru bisa setelah seluruh unit kembali dari proyek.</div>
+<?php elseif (isset($b['serah']['kembali']) && !$r['dikembalikan'] && ($b['serah']['kondisi_ringkas'] ?? 'Baik') !== 'Baik'): ?>
+<div class="kecil teks-kuning" data-kondisi-proyek>Kembali dari proyek: <?= e(teks_kondisi($b['serah']['kondisi_rincian'] ?? [])) ?>. Periksa sebelum diserahkan ke vendor; status perbaikannya tidak tercatat di sini.</div>
 <?php endif; ?>
 <?php if (boleh('rental.kelola') && ($r['bisa_terima'] || $r['bisa_tempo'] || $r['bisa_kembali'])): ?>
 <div class="aksi-rental">
@@ -291,7 +295,12 @@ $sewa_pesan = array_filter([
 <?= tombol_modal('dialog-terima-rental', 'Catat penerimaan', $kirim + ['waktu' => waktu_input(sekarang()), 'kondisi' => 'Baik'], 'package', 'btn btn-kecil') ?>
 <?php endif; ?>
 <?php if ($r['bisa_kembali']): ?>
-<?= tombol_modal('dialog-kembali-vendor', 'Kembalikan ke vendor', $kirim + ['waktu' => waktu_input(sekarang()), 'kondisi' => 'Baik'], 'truck', 'btn btn-kecil') ?>
+<?php
+$info_proyek = isset($b['serah']['kembali'])
+    ? 'Sudah kembali seluruhnya dari proyek ' . ($pr['kode'] ?? '?') . ' pada ' . tgl($b['serah']['kembali'], 'singkat_jam') . ': ' . teks_kondisi($b['serah']['kondisi_rincian'] ?? []) . '.' . (($b['serah']['kondisi_ringkas'] ?? 'Baik') !== 'Baik' ? ' Kondisi itu belum tentu sudah diperbaiki; periksa sebelum diserahkan ke vendor.' : '')
+    : 'Rental ini tidak tercatat keluar ke proyek melalui Serah Terima.';
+?>
+<?= tombol_modal('dialog-kembali-vendor', 'Kembalikan ke vendor', $kirim + ['waktu' => waktu_input(sekarang()), 'kondisi' => isset($b['serah']['kembali']) ? ($b['serah']['kondisi_ringkas'] ?: 'Baik') : 'Baik', '_proyek' => $info_proyek], 'truck', 'btn btn-kecil') ?>
 <?php endif; ?>
 <?php if ($r['bisa_tempo'] && $r['jatuh_tempo']): ?>
 <?= tombol_modal('dialog-perpanjang-rental', 'Perpanjang', $kirim + ['_tempo_lama' => tgl($r['jatuh_tempo'], 'panjang'), 'jatuh_tempo' => date('Y-m-d', strtotime($r['jatuh_tempo'] . ' +1 day'))], 'calendar-days', 'btn btn-sekunder btn-kecil') ?>

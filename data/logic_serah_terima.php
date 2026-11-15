@@ -160,22 +160,43 @@ function unit_belum_kembali(?int $proyek_id = null): array
 
 function barang_di_luar(?int $proyek_id = null): array
 {
+    // Sprint 3C: 'jumlah' = saldo yang masih di proyek (keluar - akumulasi kembali).
     $hasil = [];
+    $transaksi = db('transaksi');
     foreach (db('alokasi') as $alokasi) {
         if (!sedang_keluar($alokasi) || ($proyek_id !== null && (int) $alokasi['proyek_id'] !== $proyek_id)) {
             continue;
         }
         $serah = serah_alokasi((int) $alokasi['id']);
+        $keluar = $serah['jumlah_keluar'] ?? jumlah_alokasi($alokasi);
+        $kembali = $serah['jumlah_kembali'] ?? 0;
         $hasil[] = [
             'alokasi' => $alokasi,
             'unit' => $alokasi['sumber'] === 'Studio' ? db_cari('perlengkapan', (int) $alokasi['perlengkapan_id']) : null,
-            'jumlah' => $serah['jumlah_keluar'] ?? jumlah_alokasi($alokasi),
+            'jumlah' => max(0, $keluar - $kembali),
+            'jumlah_keluar' => $keluar,
+            'jumlah_kembali' => $kembali,
+            'status_kembali' => $serah['status_kembali'] ?? 'Belum Kembali',
+            'kondisi_rincian' => $serah['kondisi_rincian'] ?? [],
+            'kembali_terakhir' => $serah['kembali_terakhir'] ?? null,
+            'trx_keluar' => $transaksi[$serah['trx_keluar']] ?? null,
             'status' => status_keluar($alokasi),
             'keluar' => $serah['keluar'],
         ];
     }
     usort($hasil, fn ($a, $b) => strcmp($a['alokasi']['tgl_selesai'], $b['alokasi']['tgl_selesai']));
     return $hasil;
+}
+
+function teks_kondisi(array $rincian): string
+{
+    $bagian = [];
+    foreach (daftar_kondisi() as $kondisi) {
+        if (!empty($rincian[$kondisi])) {
+            $bagian[] = $rincian[$kondisi] . ' ' . $kondisi;
+        }
+    }
+    return implode(', ', $bagian);
 }
 
 function kelompok_per_proyek(array $daftar): array
@@ -249,38 +270,74 @@ function proses_checkout(array $proyek, array $item, array $penerima, string $wa
     return ['kode' => $kode, 'total' => $total, 'per_sumber' => $per_sumber];
 }
 
-function proses_checkin(array $proyek, array $kondisi_per_alokasi, string $catatan): array
+function proses_pengembalian(array $proyek, array $item, ?array $penyerah, string $waktu, string $catatan): array
 {
+    // Sprint 3C: satu transaksi Kembali; satu detail per alokasi per kondisi, merujuk transaksi Keluar asal (trx_asal).
     $kode = kode_transaksi_baru();
     $trx_id = db_tambah('transaksi', [
         'kode' => $kode,
         'proyek_id' => $proyek['id'],
         'jenis' => 'Kembali',
-        'waktu' => date('Y-m-d H:i', strtotime(sekarang())),
+        'waktu' => $waktu,
         'petugas_id' => $_SESSION['user_id'] ?? null,
         'penerima' => nama_pengguna($_SESSION['user_id'] ?? null),
+        'penyerah' => $penyerah['nama'] ?? '',
+        'penyerah_id' => $penyerah ? (int) $penyerah['id'] : null,
         'catatan' => $catatan,
+        'dicatat_pada' => date('Y-m-d H:i', strtotime(sekarang())),
     ]);
+    $per_sumber = ['Studio' => 0, 'Rental' => 0, 'Milik Kru' => 0];
+    $per_kondisi = ['Baik' => 0, 'Maintenance' => 0, 'Rusak' => 0];
     $terlambat = 0;
     $bermasalah = [];
-    foreach ($kondisi_per_alokasi as $alokasi_id => $kondisi) {
-        $alokasi = db_cari('alokasi', (int) $alokasi_id);
-        db_tambah('detail_transaksi', ['transaksi_id' => $trx_id, 'alokasi_id' => (int) $alokasi_id, 'kondisi' => $kondisi, 'jumlah' => 1, 'sumber' => 'Studio']);
-        if (HARI_INI > $alokasi['tgl_selesai']) {
+    $eksternal_bermasalah = [];
+    $insiden = [];
+    foreach ($item as $baris) {
+        $alokasi = $baris['alokasi'];
+        if (substr($waktu, 0, 10) > $alokasi['tgl_selesai']) {
             $terlambat++;
         }
-        if ($kondisi !== 'Baik') {
-            $unit = db_cari('perlengkapan', (int) $alokasi['perlengkapan_id']);
-            $jenis = $kondisi === 'Rusak' ? 'Rusak' : 'Masalah Teknis';
-            $deskripsi = $catatan !== '' ? $catatan : 'Dilaporkan saat pengembalian ' . $kode . '.';
-            lapor_insiden((int) $alokasi['perlengkapan_id'], (int) $proyek['id'], $jenis, $deskripsi, $kondisi);
-            $bermasalah[] = $unit['kode_unit'] ?? '?';
+        foreach ($baris['per_kondisi'] as $kondisi => $jumlah) {
+            if ($jumlah < 1) {
+                continue;
+            }
+            $detail_id = db_tambah('detail_transaksi', [
+                'transaksi_id' => $trx_id,
+                'alokasi_id' => (int) $alokasi['id'],
+                'kondisi' => $kondisi,
+                'jumlah' => $jumlah,
+                'sumber' => $alokasi['sumber'],
+                'trx_asal' => (int) $baris['trx_asal'],
+            ]);
+            $per_sumber[$alokasi['sumber']] += $jumlah;
+            $per_kondisi[$kondisi] += $jumlah;
+            if ($kondisi === 'Baik') {
+                continue;
+            }
+            if ($alokasi['sumber'] === 'Studio') {
+                $unit = db_cari('perlengkapan', (int) $alokasi['perlengkapan_id']);
+                $deskripsi = ($catatan !== '' ? $catatan . ' · ' : '') . 'Dilaporkan saat pengembalian ' . $kode . ' (barang keluar ' . (db_cari('transaksi', (int) $baris['trx_asal'])['kode'] ?? '?') . ').';
+                $kode_ins = lapor_insiden((int) $alokasi['perlengkapan_id'], (int) $proyek['id'], $kondisi === 'Rusak' ? 'Rusak' : 'Masalah Teknis', $deskripsi, $kondisi);
+                foreach (db('insiden') as $ins) {
+                    if ($ins['kode'] === $kode_ins) {
+                        db_ubah('insiden', (int) $ins['id'], ['transaksi_id' => $trx_id, 'alokasi_id' => (int) $alokasi['id'], 'detail_id' => $detail_id]);
+                    }
+                }
+                $bermasalah[] = $unit['kode_unit'] ?? '?';
+                $insiden[] = $kode_ins;
+            } else {
+                $eksternal_bermasalah[] = $alokasi['nama_barang'] . ' ' . $jumlah . ' ' . $kondisi;
+            }
         }
     }
-    $jumlah = count($kondisi_per_alokasi);
-    $ket = $jumlah . ' unit kembali' . ($terlambat ? ', ' . $terlambat . ' terlambat' : ' tepat waktu') . ($bermasalah ? ', bermasalah: ' . implode(', ', $bermasalah) : '');
+    $total = array_sum($per_sumber);
+    $ket = $total . ' unit kembali (' . teks_per_sumber($per_sumber) . ') · kondisi ' . teks_kondisi($per_kondisi);
+    $ket .= $terlambat ? ' · ' . $terlambat . ' alokasi terlambat' : ' · tepat waktu';
+    $ket .= $penyerah ? ' · diserahkan ' . $penyerah['nama'] : '';
+    $ket .= $insiden ? ' · insiden ' . implode(', ', $insiden) : '';
+    $ket .= $eksternal_bermasalah ? ' · eksternal bermasalah: ' . implode(', ', $eksternal_bermasalah) : '';
     catat_riwayat('Pengembalian', $proyek['kode'] . ' · ' . $kode, $ket);
-    return ['kode' => $kode, 'terlambat' => $terlambat, 'bermasalah' => $bermasalah];
+    return ['kode' => $kode, 'total' => $total, 'per_sumber' => $per_sumber, 'per_kondisi' => $per_kondisi, 'terlambat' => $terlambat, 'bermasalah' => $bermasalah, 'eksternal_bermasalah' => $eksternal_bermasalah, 'insiden' => $insiden];
 }
 
 function daftar_transaksi(?int $proyek_id = null): array

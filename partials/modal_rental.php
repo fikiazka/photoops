@@ -102,7 +102,7 @@ $info_barang = function (): string {
 <?= dialog_buka('dialog-kembali-vendor', 'Kembalikan ke vendor', 'Catat saat barang sudah diserahkan kembali kepada vendor.') ?>
 <input type="hidden" name="aksi" value="kembalikan_vendor">
 <?= $info_barang() ?>
-<div class="pemberitahuan pemberitahuan-info" role="note"><?= ikon('info') ?><span>Pencatatan ini belum terhubung dengan serah terima proyek: sistem belum mencatat barang Rental keluar dan kembali dari lokasi proyek. Pastikan barang sudah kembali dari proyek sebelum diserahkan ke vendor.</span></div>
+<div class="pemberitahuan pemberitahuan-info" role="note" data-info-proyek><?= ikon('info') ?><span><span data-isi-teks="_proyek"><?= e(lama('_proyek', 'Pengembalian dari proyek dicatat di Serah Terima.')) ?></span> Pengembalian ke vendor tetap harus dikonfirmasi secara fisik di sini.</span></div>
 <div class="baris-bidang">
 <div class="bidang">
 <span class="label-kecil">Jumlah dikembalikan</span>

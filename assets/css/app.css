@@ -1644,6 +1644,22 @@ fieldset.bidang legend {
   padding-bottom: 6px;
 }
 
+.kembali-jumlah {
+  flex: 0 0 270px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding-bottom: 6px;
+}
+
+.kembali-jumlah .bidang {
+  margin: 0;
+}
+
+.kembali-jumlah label {
+  font-size: 12px;
+}
+
 .persiapan-progres {
   padding: 16px 20px;
   display: flex;
@@ -2286,6 +2302,11 @@ fieldset.bidang legend {
   }
 
   .bidang-sejajar {
+    flex: 1 1 100%;
+    padding: 0 4px 10px 40px;
+  }
+
+  .kembali-jumlah {
     flex: 1 1 100%;
     padding: 0 4px 10px 40px;
   }

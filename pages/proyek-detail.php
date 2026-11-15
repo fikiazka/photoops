@@ -583,6 +583,8 @@ require ROOT . '/includes/layout_head.php';
 <?php endif; ?>
 <?php if (isset($serah['kembali'])): ?>
 <?= ($serah['kondisi_kembali'] ?? 'Baik') === 'Baik' ? badge('Kembali') : badge($serah['kondisi_kembali'], 'Kembali · ' . $serah['kondisi_kembali']) ?>
+<?php elseif (($serah['status_kembali'] ?? '') === 'Kembali Sebagian'): ?>
+<?= badge('Kembali Sebagian', 'Kembali sebagian · ' . (int) $serah['jumlah_kembali'] . '/' . (int) $serah['jumlah_keluar']) ?>
 <?php elseif (isset($serah['keluar'])): ?>
 <?= badge(status_keluar($a), 'Keluar · ' . status_keluar($a)) ?>
 <?php endif; ?>
@@ -741,11 +743,13 @@ $barang_p = alokasi_proyek($pid, true);
 $gerbang_p = gerbang_keluar($proyek);
 $jml_keluar_p = 0;
 $unit_keluar_p = 0;
+$unit_sisa_p = 0;
 foreach ($barang_p as $bp) {
     $sp = serah_alokasi($bp['id']);
     if (isset($sp['keluar'])) {
         $jml_keluar_p++;
         $unit_keluar_p += $sp['jumlah_keluar'] ?? jumlah_alokasi($bp);
+        $unit_sisa_p += $sp['sisa'] ?? 0;
     }
 }
 ?>
@@ -753,7 +757,7 @@ foreach ($barang_p as $bp) {
 <div class="kartu-kepala">
 <div>
 <h2>Barang di proyek ini</h2>
-<p data-ringkas-keluar><?= $jml_keluar_p ?> dari <?= count($barang_p) ?> alokasi sudah tercatat keluar (<?= $unit_keluar_p ?> unit). Studio, Rental, dan Milik Kru dicatat keluar di Serah Terima setelah persiapan dikonfirmasi; pengembalian Rental dan Milik Kru belum tersedia.</p>
+<p data-ringkas-keluar><?= $jml_keluar_p ?> dari <?= count($barang_p) ?> alokasi sudah tercatat keluar (<?= $unit_keluar_p ?> unit) · <?= $unit_sisa_p ?> unit masih di proyek. Barang keluar dicatat di Serah Terima setelah persiapan dikonfirmasi; pengembalian dari proyek dicatat per jumlah dan kondisi.</p>
 </div>
 <?php if (boleh('serah_terima.kelola')): ?>
 <a href="<?= e(url('pages/serah-terima.php')) ?>" class="btn btn-sekunder btn-kecil"><?= ikon('arrow-left-right', 16) ?><span>Buka serah terima</span></a>
@@ -767,7 +771,7 @@ foreach ($barang_p as $bp) {
 <?php else: ?>
 <div class="tabel-wrap">
 <table class="tabel tabel-kartu">
-<thead><tr><th>Barang</th><th class="angka">Jumlah</th><th>Keluar</th><th>Jatuh tempo</th><th>Kembali</th><th>Status</th></tr></thead>
+<thead><tr><th>Barang</th><th class="angka">Jumlah</th><th>Keluar</th><th>Jatuh tempo</th><th>Kembali dari proyek</th><th>Status</th></tr></thead>
 <tbody>
 <?php foreach ($barang_p as $a): ?>
 <?php $serah = serah_alokasi($a['id']); ?>
@@ -776,12 +780,14 @@ foreach ($barang_p as $bp) {
 <td data-label="Jumlah" class="angka"><?= (int) ($serah['jumlah_keluar'] ?? jumlah_alokasi($a)) ?> unit</td>
 <td data-label="Keluar"><?php if (isset($serah['keluar'])): ?><?php $trx_s = db_cari('transaksi', $serah['trx_keluar'] ?? 0); ?><?= e(tgl($serah['keluar'], 'singkat_jam')) ?><div class="kecil redup"><?= e(($trx_s['kode'] ?? '?') . (!empty($trx_s['penerima']) ? ' · ' . $trx_s['penerima'] : '')) ?></div><?php else: ?><span class="redup">—</span><?php endif; ?></td>
 <td data-label="Jatuh tempo"><?= e(tgl($a['tgl_selesai'])) ?></td>
-<td data-label="Kembali"><?= isset($serah['kembali']) ? e(tgl($serah['kembali'], 'singkat_jam')) . ' · ' . e($serah['kondisi_kembali']) : '<span class="redup">—</span>' ?></td>
+<td data-label="Kembali dari proyek"><?php if (!empty($serah['jumlah_kembali'])): ?><?= (int) $serah['jumlah_kembali'] ?> dari <?= (int) $serah['jumlah_keluar'] ?> unit · sisa <?= (int) $serah['sisa'] ?><div class="kecil redup"><?= e(teks_kondisi($serah['kondisi_rincian'] ?? []) . ' · terakhir ' . tgl($serah['kembali_terakhir'], 'singkat_jam')) ?></div><?php elseif (isset($serah['keluar'])): ?>0 dari <?= (int) $serah['jumlah_keluar'] ?> unit · sisa <?= (int) $serah['sisa'] ?><?php else: ?><span class="redup">—</span><?php endif; ?></td>
 <td data-label="Status">
 <?php if (isset($serah['kembali'])): ?>
-<?= badge(substr($serah['kembali'], 0, 10) > $a['tgl_selesai'] ? 'Terlambat' : 'Kembali', substr($serah['kembali'], 0, 10) > $a['tgl_selesai'] ? 'Kembali terlambat' : 'Kembali') ?>
+<?= badge(substr($serah['kembali'], 0, 10) > $a['tgl_selesai'] ? 'Terlambat' : 'Sudah Kembali', substr($serah['kembali'], 0, 10) > $a['tgl_selesai'] ? 'Sudah kembali · terlambat' : 'Sudah Kembali') ?>
+<?php elseif (($serah['status_kembali'] ?? '') === 'Kembali Sebagian'): ?>
+<?= badge('Kembali Sebagian') ?> <?= badge(status_keluar($a), 'Tempo · ' . status_keluar($a)) ?>
 <?php elseif (isset($serah['keluar'])): ?>
-<?= badge(status_keluar($a), 'Keluar · ' . status_keluar($a)) ?>
+<?= badge(status_keluar($a), 'Belum kembali · ' . status_keluar($a)) ?>
 <?php else: ?>
 <?= badge($a['status'] === 'Dikonfirmasi' ? 'Menunggu' : $a['status'], $a['status'] === 'Dikonfirmasi' ? 'Belum keluar' : $a['status']) ?>
 <?php endif; ?>

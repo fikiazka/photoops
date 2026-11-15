@@ -83,37 +83,81 @@ if ($a['sumber'] === 'Studio') {
 <?= dialog_tutup('Catat barang keluar') ?>
 <?php else: ?>
 <?php $id_dialog = 'dialog-kembali-' . $kp['id']; $pilih_lama = lama_daftar('alokasi'); ?>
-<?= dialog_buka($id_dialog, 'Pengembalian · ' . $kp['kode'], 'Centang unit yang dikembalikan dan cek kondisinya satu per satu.', 'dialog dialog-lebar') ?>
+<?= dialog_buka($id_dialog, 'Pengembalian · ' . $kp['kode'], $kp['nama'] . ' · ' . $kp['status'], 'dialog dialog-lebar') ?>
 <input type="hidden" name="aksi" value="checkin">
 <input type="hidden" name="proyek_id" value="<?= (int) $kp['id'] ?>">
+<p class="petunjuk">Centang barang yang diterima kembali dari proyek dan periksa kondisinya. Rental dan Milik Kru boleh dikembalikan sebagian; isi jumlah per kondisi. Pencatatan ini tidak mengembalikan Rental ke vendor dan tidak mencatat penyerahan barang kepada pemiliknya.</p>
 <?php if (galat('alokasi') !== ''): ?><?= pesan_galat('alokasi') ?><?php endif; ?>
 <ul class="ceklist">
 <?php foreach ($kelompok_serah['unit'] as $baris): ?>
-<?php $a = $baris['alokasi']; $tercentang = $pilih_lama ? in_array((string) $a['id'], $pilih_lama, true) : true; ?>
-<li class="kembali-baris">
+<?php
+$a = $baris['alokasi'];
+$aid = (int) $a['id'];
+$tercentang = $pilih_lama ? in_array((string) $aid, $pilih_lama, true) : true;
+$trx_asal = $baris['trx_keluar'];
+$judul_k = $a['sumber'] === 'Studio' ? label_unit($baris['unit']) : $a['nama_barang'];
+?>
+<li class="kembali-baris" data-kembali-alokasi="<?= $aid ?>">
 <label class="ceklist-item">
-<input type="checkbox" name="alokasi[]" value="<?= (int) $a['id'] ?>"<?= $tercentang ? ' checked' : '' ?>>
+<input type="checkbox" name="alokasi[]" value="<?= $aid ?>"<?= $tercentang ? ' checked' : '' ?>>
 <span class="ceklist-kotak" aria-hidden="true"><?= ikon('check', 14) ?></span>
 <span class="daftar-utama">
-<span class="daftar-judul"><?= e(label_unit($baris['unit'])) ?></span>
-<span class="daftar-sub">Keluar <?= e(tgl($baris['keluar'], 'singkat_jam')) ?> · tempo <?= e(tgl($a['tgl_selesai'], 'singkat')) ?></span>
+<span class="daftar-judul"><?= e($judul_k) ?> <span class="sumber sumber-<?= e(strtolower(str_replace(' ', '-', $a['sumber']))) ?>"><?= e($a['sumber']) ?></span></span>
+<span class="daftar-sub">Keluar <?= (int) $baris['jumlah_keluar'] ?> · sudah kembali <?= (int) $baris['jumlah_kembali'] ?> · masih di proyek <?= (int) $baris['jumlah'] ?> unit</span>
+<span class="daftar-sub"><?= e(($trx_asal['kode'] ?? '?') . ' · keluar ' . tgl($baris['keluar'], 'singkat_jam') . ' · tempo ' . tgl($a['tgl_selesai'], 'singkat')) ?><?= $a['sumber'] === 'Milik Kru' ? ' · milik ' . e(nama_pengguna($a['pemilik_id'])) : ($a['sumber'] === 'Rental' ? ' · vendor ' . e($a['vendor']) : '') ?></span>
 </span>
 <?= badge($baris['status']) ?>
 </label>
+<input type="hidden" name="saldo[<?= $aid ?>]" value="<?= (int) $baris['jumlah'] ?>">
+<?php if ($a['sumber'] === 'Studio'): ?>
 <div class="bidang bidang-sejajar">
-<label for="<?= e($id_dialog) ?>-kondisi-<?= (int) $a['id'] ?>" class="sr">Kondisi <?= e($baris['unit']['kode_unit'] ?? '') ?></label>
-<select id="<?= e($id_dialog) ?>-kondisi-<?= (int) $a['id'] ?>" name="kondisi[<?= (int) $a['id'] ?>]">
+<label for="<?= e($id_dialog) ?>-kondisi-<?= $aid ?>" class="sr">Kondisi <?= e($baris['unit']['kode_unit'] ?? '') ?></label>
+<select id="<?= e($id_dialog) ?>-kondisi-<?= $aid ?>" name="kondisi[<?= $aid ?>]">
 <?= opsi(['Baik' => 'Kondisi baik', 'Maintenance' => 'Perlu maintenance', 'Rusak' => 'Rusak'], 'Baik') ?>
 </select>
 </div>
+<?php else: ?>
+<div class="kembali-jumlah" role="group" aria-label="Jumlah dikembalikan per kondisi untuk <?= e($a['nama_barang']) ?>">
+<?php foreach (['Baik' => 'Baik', 'Maintenance' => 'Maintenance', 'Rusak' => 'Rusak'] as $kk => $label_k): ?>
+<div class="bidang">
+<label for="<?= e($id_dialog) ?>-j-<?= $aid ?>-<?= e($kk) ?>"><?= e($label_k) ?></label>
+<input id="<?= e($id_dialog) ?>-j-<?= $aid ?>-<?= e($kk) ?>" name="jumlah[<?= $aid ?>][<?= e($kk) ?>]" type="number" min="0" max="<?= (int) $baris['jumlah'] ?>" step="1" inputmode="numeric" value="<?= $kk === 'Baik' ? (int) $baris['jumlah'] : '' ?>">
+</div>
+<?php endforeach; ?>
+</div>
+<?php endif; ?>
 </li>
 <?php endforeach; ?>
 </ul>
+<div class="baris-bidang">
 <div class="bidang">
-<label for="<?= e($id_dialog) ?>-catatan">Catatan <span class="redup">(wajib jika ada unit bermasalah)</span></label>
+<label for="<?= e($id_dialog) ?>-waktu">Waktu diterima kembali</label>
+<input id="<?= e($id_dialog) ?>-waktu" name="waktu" type="datetime-local" value="<?= e(lama('waktu', waktu_input(sekarang()))) ?>"<?= attr_galat('waktu') ?>>
+<?= pesan_galat('waktu') ?>
+</div>
+<div class="bidang">
+<label for="<?= e($id_dialog) ?>-penyerah">Diserahkan oleh <span class="redup">(opsional)</span></label>
+<select id="<?= e($id_dialog) ?>-penyerah" name="penyerah_id"<?= attr_galat('penyerah_id') ?>>
+<?= opsi($penerima_opsi, lama('penyerah_id'), 'Tidak dicatat') ?>
+</select>
+<?= pesan_galat('penyerah_id') ?>
+</div>
+</div>
+<div class="bidang">
+<label for="<?= e($id_dialog) ?>-catatan">Catatan <span class="redup">(wajib jika ada barang Maintenance/Rusak)</span></label>
 <textarea id="<?= e($id_dialog) ?>-catatan" name="catatan" maxlength="300" placeholder="Contoh: lensa tergores di bagian depan"<?= attr_galat('catatan') ?>><?= e(lama('catatan')) ?></textarea>
 <?= pesan_galat('catatan') ?>
-<p class="petunjuk">Unit dengan kondisi Maintenance atau Rusak otomatis tercatat sebagai insiden.</p>
+<p class="petunjuk">Unit studio Maintenance/Rusak otomatis tercatat sebagai insiden dan tidak bisa dikeluarkan sampai insidennya selesai. Kondisi Rental/Milik Kru dicatat di transaksi ini tanpa mengubah inventaris studio. Petugas penerima: <?= e(nama_pengguna($_SESSION['user_id'] ?? null)) ?>.</p>
 </div>
+<ul class="ceklist">
+<li>
+<label class="ceklist-item">
+<input type="checkbox" name="konfirmasi" value="1">
+<span class="ceklist-kotak" aria-hidden="true"><?= ikon('check', 14) ?></span>
+<span class="daftar-utama"><span class="daftar-judul">Barang yang dicentang sudah diterima kembali dan kondisinya sudah diperiksa.</span><span class="daftar-sub">Jumlah dan kondisi tersimpan sebagai transaksi pengembalian yang merujuk barang keluar asal.</span></span>
+</label>
+</li>
+</ul>
+<?= pesan_galat('konfirmasi') ?>
 <?= dialog_tutup('Catat pengembalian') ?>
 <?php endif; ?>

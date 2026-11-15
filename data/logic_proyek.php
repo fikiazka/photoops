@@ -261,19 +261,20 @@ function pemenuhan_kebutuhan(array $kebutuhan): array
         }
         $serah = serah_alokasi($alokasi['id']);
         if (isset($serah['keluar'])) {
-            $hasil['keluar'] += $qty;
+            // Sprint 3C: hitung dari jumlah transaksi (keluar, akumulasi kembali, sisa), bukan dari banyaknya baris.
+            $keluar_j = $serah['jumlah_keluar'] ?? $qty;
+            $kembali_j = $serah['jumlah_kembali'] ?? 0;
+            $sisa_j = $serah['sisa'] ?? max(0, $keluar_j - $kembali_j);
+            $hasil['keluar'] += $keluar_j;
             if ($alokasi['sumber'] !== 'Studio') {
-                $hasil['eksternal_keluar'] += $qty;
+                $hasil['eksternal_keluar'] += $keluar_j;
             }
-            if (isset($serah['kembali'])) {
-                $hasil['kembali'] += $qty;
-                if (($serah['kondisi_kembali'] ?? 'Baik') !== 'Baik') {
-                    $hasil['kembali_bermasalah'] += $qty;
-                }
-            } else {
-                $hasil['di_luar'] += $qty;
+            $hasil['kembali'] += $kembali_j;
+            $hasil['kembali_bermasalah'] += $kembali_j - ($serah['kondisi_rincian']['Baik'] ?? 0);
+            if ($sisa_j > 0) {
+                $hasil['di_luar'] += $sisa_j;
                 if (status_keluar($alokasi) === 'Terlambat') {
-                    $hasil['terlambat'] += $qty;
+                    $hasil['terlambat'] += $sisa_j;
                 }
             }
         }

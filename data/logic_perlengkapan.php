@@ -33,6 +33,8 @@ function indeks_serah(): array
     if ($cache !== null && $tanda === $tanda_baru) {
         return $cache;
     }
+    // Sprint 3C: satu detail Keluar per alokasi; pengembalian boleh beberapa baris (sebagian / per kondisi).
+    // Baris lama tanpa field jumlah dihitung 1 unit. 'kembali' hanya diisi bila seluruh jumlah keluar sudah kembali.
     $cache = [];
     $transaksi = db('transaksi');
     foreach (db('detail_transaksi') as $detail) {
@@ -40,12 +42,39 @@ function indeks_serah(): array
         if (!$trx) {
             continue;
         }
-        $kunci = $trx['jenis'] === 'Keluar' ? 'keluar' : 'kembali';
-        $cache[$detail['alokasi_id']][$kunci] = $trx['waktu'];
-        $cache[$detail['alokasi_id']]['trx_' . $kunci] = $trx['id'];
-        $cache[$detail['alokasi_id']]['jumlah_' . $kunci] = max(1, (int) ($detail['jumlah'] ?? 1));
-        if ($kunci === 'kembali') {
-            $cache[$detail['alokasi_id']]['kondisi_kembali'] = $detail['kondisi'];
+        $aid = $detail['alokasi_id'];
+        $jumlah = max(1, (int) ($detail['jumlah'] ?? 1));
+        if ($trx['jenis'] === 'Keluar') {
+            $cache[$aid]['keluar'] = $trx['waktu'];
+            $cache[$aid]['trx_keluar'] = $trx['id'];
+            $cache[$aid]['jumlah_keluar'] = $jumlah;
+            continue;
+        }
+        $kondisi = (string) $detail['kondisi'];
+        $cache[$aid]['jumlah_kembali'] = ($cache[$aid]['jumlah_kembali'] ?? 0) + $jumlah;
+        $cache[$aid]['kondisi_rincian'][$kondisi] = ($cache[$aid]['kondisi_rincian'][$kondisi] ?? 0) + $jumlah;
+        if (!isset($cache[$aid]['kembali_terakhir']) || $trx['waktu'] >= $cache[$aid]['kembali_terakhir']) {
+            $cache[$aid]['kembali_terakhir'] = $trx['waktu'];
+            $cache[$aid]['trx_kembali_terakhir'] = $trx['id'];
+        }
+        if (!in_array($trx['id'], $cache[$aid]['trx_kembali_daftar'] ?? [], true)) {
+            $cache[$aid]['trx_kembali_daftar'][] = $trx['id'];
+        }
+    }
+    foreach ($cache as $aid => $s) {
+        $keluar = $s['jumlah_keluar'] ?? 0;
+        $kembali = $s['jumlah_kembali'] ?? 0;
+        $cache[$aid]['jumlah_kembali'] = $kembali;
+        $cache[$aid]['sisa'] = max(0, $keluar - $kembali);
+        $rincian = $s['kondisi_rincian'] ?? [];
+        $cache[$aid]['kondisi_ringkas'] = !empty($rincian['Rusak']) ? 'Rusak' : (!empty($rincian['Maintenance']) ? 'Maintenance' : ($kembali ? 'Baik' : ''));
+        if (isset($s['keluar'])) {
+            $cache[$aid]['status_kembali'] = $kembali === 0 ? 'Belum Kembali' : ($kembali < $keluar ? 'Kembali Sebagian' : 'Sudah Kembali');
+            if ($kembali > 0 && $kembali >= $keluar) {
+                $cache[$aid]['kembali'] = $s['kembali_terakhir'];
+                $cache[$aid]['trx_kembali'] = $s['trx_kembali_terakhir'];
+                $cache[$aid]['kondisi_kembali'] = $cache[$aid]['kondisi_ringkas'];
+            }
         }
     }
     $tanda = $tanda_baru;
@@ -417,7 +446,7 @@ function proses_aksi_rental(string $aksi, array $alokasi, array $pengguna): arra
         if (!$terima && $info['dipakai_proyek']) {
             $serah = serah_alokasi((int) $alokasi['id']);
             $trx = db_cari('transaksi', $serah['trx_keluar'] ?? 0);
-            return ['umum' => $nama . ' masih tercatat digunakan proyek ' . (db_cari('proyek', (int) $alokasi['proyek_id'])['kode'] ?? '?') . ' (barang keluar ' . ($trx['kode'] ?? '?') . ', ' . tgl($serah['keluar'], 'lengkap') . '). Catat pengembalian dari proyek terlebih dahulu. Pencatatan pengembalian Rental dari proyek belum tersedia, jadi rental ini belum bisa dikembalikan ke vendor.'];
+            return ['umum' => $nama . ' masih tercatat digunakan proyek ' . (db_cari('proyek', (int) $alokasi['proyek_id'])['kode'] ?? '?') . ' (barang keluar ' . ($trx['kode'] ?? '?') . ', ' . tgl($serah['keluar'], 'lengkap') . '): ' . (int) ($serah['sisa'] ?? 0) . ' dari ' . (int) ($serah['jumlah_keluar'] ?? 0) . ' unit belum kembali dari proyek. Catat pengembalian dari proyek terlebih dahulu di Serah Terima; pengembalian ke vendor baru bisa setelah seluruh unit kembali.'];
         }
         if (!$terima && !$info['bisa_kembali']) {
             return ['umum' => $info['dikembalikan'] ? $nama . ' sudah tercatat dikembalikan ke vendor pada ' . tgl($alokasi['dikembalikan_vendor_pada'], 'lengkap') . '.' : $nama . ' belum tercatat diterima dari vendor, jadi belum bisa dikembalikan.'];
