@@ -13,7 +13,12 @@ $mendatang = proyek_mendatang(14);
 <?php else: ?>
 <ul class="daftar">
 <?php foreach ($mendatang as $p): ?>
-<?php $prs = persiapan_proyek($p); ?>
+<?php
+$prs = persiapan_proyek($p);
+$gerak = ringkasan_barang_proyek((int) $p['id']);
+$np_k = $gerak['unit'] || $gerak['pernah_keluar'] || $prs['lewat'] ? null : penilaian_persiapan($p);
+$label_np = ['Persiapan Dikonfirmasi Selesai' => 'Dikonfirmasi', 'Siap untuk Dikonfirmasi' => 'Siap dikonfirmasi', 'Belum Siap' => 'Belum siap', 'Tidak Dikonfirmasi' => 'Tidak dikonfirmasi'];
+?>
 <li>
 <a class="daftar-baris daftar-tautan" href="<?= e(url('pages/proyek-detail.php?id=' . $p['id'] . '&tab=persiapan')) ?>">
 <span class="tanggal-blok"><span><?= e(date('j', strtotime($p['mulai']))) ?></span><span><?= e(nama_bulan((int) date('n', strtotime($p['mulai'])), true)) ?></span></span>
@@ -21,10 +26,18 @@ $mendatang = proyek_mendatang(14);
 <span class="daftar-judul"><?= e($p['kode']) ?> · <?= e($p['nama']) ?></span>
 <span class="progres">
 <?= bilah($prs['persen'], $prs['lewat'] ? 'merah' : ($prs['status'] === 'Siap' ? 'hijau' : 'tinta')) ?>
-<span class="kecil"><?= $prs['selesai'] ?>/<?= $prs['total'] ?></span>
+<span class="kecil"><?= $prs['selesai'] ?>/<?= $prs['total'] ?> diperiksa</span>
 </span>
 </span>
-<?= $prs['lewat'] ? badge('Lewat deadline') : badge($prs['total'] ? $prs['status'] : 'Belum Dimulai') ?>
+<?php if ($gerak['unit']): ?>
+<?= badge('Sedang Keluar', 'Di proyek · ' . $gerak['unit'] . ' unit') ?>
+<?php elseif ($gerak['pernah_keluar']): ?>
+<?= badge('Sudah Kembali', 'Sudah kembali') ?>
+<?php elseif ($prs['lewat']): ?>
+<?= badge('Lewat deadline') ?>
+<?php else: ?>
+<?= badge($np_k['status'], $label_np[$np_k['status']] ?? $np_k['status']) ?>
+<?php endif; ?>
 </a>
 </li>
 <?php endforeach; ?>

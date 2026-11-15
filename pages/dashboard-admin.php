@@ -13,8 +13,7 @@ if (is_post()) {
 $proyek_semua = db('proyek');
 $proyek_jalan = array_filter($proyek_semua, fn ($p) => in_array($p['status'], ['Dijadwalkan', 'Berlangsung'], true));
 $proyek_draf = array_filter($proyek_semua, fn ($p) => $p['status'] === 'Draf');
-$belum_kembali = unit_belum_kembali();
-$terlambat = array_filter($belum_kembali, fn ($b) => $b['status'] === 'Terlambat');
+$di_proyek = ringkasan_barang_proyek();
 $terbuka = insiden_terbuka();
 $lewat = array_filter($proyek_semua, fn ($p) => persiapan_proyek($p)['lewat']);
 
@@ -66,14 +65,14 @@ judul_halaman('Selamat datang, ' . nama_depan($pengguna['nama']), tgl(HARI_INI, 
 <p class="kpi-ket"><?= count($proyek_draf) ?> masih draf</p>
 </a>
 <a class="kartu kpi kpi-tautan" href="<?= e(url('pages/serah-terima.php')) ?>">
-<p class="kpi-label">Unit sedang keluar</p>
-<p class="kpi-angka teks-biru"><?= count($belum_kembali) ?></p>
-<p class="kpi-ket">dari <?= $total_unit ?> unit studio</p>
+<p class="kpi-label">Barang di proyek</p>
+<p class="kpi-angka teks-biru" data-kpi-di-proyek><?= $di_proyek['unit'] ?></p>
+<p class="kpi-ket"><?= $di_proyek['unit'] ? e(teks_per_sumber($di_proyek['per_sumber'])) . ' unit belum kembali' : 'semua barang sudah kembali' ?></p>
 </a>
 <a class="kartu kpi kpi-tautan" href="<?= e(url('pages/serah-terima.php')) ?>">
 <p class="kpi-label">Terlambat kembali</p>
-<p class="kpi-angka<?= $terlambat ? ' teks-merah' : '' ?>"><?= count($terlambat) ?></p>
-<p class="kpi-ket"><?= $terlambat_historis ?> unit pernah telat kembali</p>
+<p class="kpi-angka<?= $di_proyek['terlambat'] ? ' teks-merah' : '' ?>" data-kpi-terlambat><?= $di_proyek['terlambat'] ?></p>
+<p class="kpi-ket">alokasi (<?= $di_proyek['terlambat_unit'] ?> unit) · <?= $terlambat_historis ?> alokasi pernah telat kembali</p>
 </a>
 <a class="kartu kpi kpi-tautan" href="<?= e(url('pages/perlengkapan.php?tab=insiden')) ?>">
 <p class="kpi-label">Insiden terbuka</p>

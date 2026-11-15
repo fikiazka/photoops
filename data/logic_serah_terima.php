@@ -188,6 +188,33 @@ function barang_di_luar(?int $proyek_id = null): array
     return $hasil;
 }
 
+function ringkasan_barang_proyek(?int $proyek_id = null): array
+{
+    // Sprint 3D: KPI "barang di proyek" semua sumber, dari saldo transaksi (keluar - kembali), bukan banyaknya baris.
+    $luar = barang_di_luar($proyek_id);
+    $telat = array_values(array_filter($luar, fn ($b) => $b['status'] === 'Terlambat'));
+    $pernah_keluar = false;
+    if ($proyek_id !== null) {
+        foreach (alokasi_proyek($proyek_id, true) as $a) {
+            if (isset(serah_alokasi((int) $a['id'])['keluar'])) {
+                $pernah_keluar = true;
+                break;
+            }
+        }
+    }
+    $per_sumber = hitung_per_sumber($luar);
+    return [
+        'daftar' => $luar,
+        'unit' => array_sum($per_sumber),
+        'per_sumber' => $per_sumber,
+        'alokasi' => count($luar),
+        'terlambat' => count($telat),
+        'terlambat_unit' => array_sum(array_column($telat, 'jumlah')),
+        'hari_ini' => count(array_filter($luar, fn ($b) => $b['status'] === 'Hari ini')),
+        'pernah_keluar' => $pernah_keluar,
+    ];
+}
+
 function teks_kondisi(array $rincian): string
 {
     $bagian = [];

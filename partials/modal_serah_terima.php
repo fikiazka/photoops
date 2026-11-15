@@ -86,7 +86,7 @@ if ($a['sumber'] === 'Studio') {
 <?= dialog_buka($id_dialog, 'Pengembalian · ' . $kp['kode'], $kp['nama'] . ' · ' . $kp['status'], 'dialog dialog-lebar') ?>
 <input type="hidden" name="aksi" value="checkin">
 <input type="hidden" name="proyek_id" value="<?= (int) $kp['id'] ?>">
-<p class="petunjuk">Centang barang yang diterima kembali dari proyek dan periksa kondisinya. Rental dan Milik Kru boleh dikembalikan sebagian; isi jumlah per kondisi. Pencatatan ini tidak mengembalikan Rental ke vendor dan tidak mencatat penyerahan barang kepada pemiliknya.</p>
+<p class="petunjuk">Centang barang yang diterima kembali dari proyek dan periksa kondisinya. Rental dan Milik Kru boleh dikembalikan sebagian; isi jumlah per kondisi. Pencatatan ini hanya menandai barang sudah kembali dari proyek; Rental tetap dikembalikan ke vendor lewat Barang eksternal.</p>
 <?php if (galat('alokasi') !== ''): ?><?= pesan_galat('alokasi') ?><?php endif; ?>
 <ul class="ceklist">
 <?php foreach ($kelompok_serah['unit'] as $baris): ?>

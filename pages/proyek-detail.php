@@ -418,7 +418,7 @@ foreach ($kebutuhan as $k) {
     $pemenuhan_total['dikonfirmasi'] += min($p['dikonfirmasi'], $p['jumlah']);
     $pemenuhan_total['diperiksa'] += min($p['diperiksa'], $p['jumlah']);
 }
-$di_luar = unit_belum_kembali($pid);
+$di_proyek_p = ringkasan_barang_proyek($pid);
 $id_diperiksa = id_diperiksa($pid);
 $dasar = 'pages/proyek-detail.php?id=' . $pid;
 
@@ -467,9 +467,9 @@ require ROOT . '/includes/layout_head.php';
 <?= bilah($persiapan['persen'], $persiapan['lewat'] ? 'merah' : ($persiapan['status'] === 'Siap' ? 'hijau' : 'tinta')) ?>
 </div>
 <div class="kartu kpi">
-<p class="kpi-label">Unit studio di luar</p>
-<p class="kpi-angka"><?= count($di_luar) ?></p>
-<p class="kpi-ket"><?= count(array_filter($di_luar, fn ($u) => $u['status'] === 'Terlambat')) ?> terlambat kembali</p>
+<p class="kpi-label">Barang di proyek</p>
+<p class="kpi-angka" data-kpi-di-proyek><?= $di_proyek_p['unit'] ?></p>
+<p class="kpi-ket"><?= $di_proyek_p['unit'] ? e(teks_per_sumber($di_proyek_p['per_sumber'])) . ' unit · ' : ($di_proyek_p['pernah_keluar'] ? 'semua sudah kembali · ' : 'belum ada yang keluar · ') ?><?= $di_proyek_p['terlambat'] ?> terlambat kembali</p>
 </div>
 </div>
 <div class="grid-2">
