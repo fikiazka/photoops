@@ -177,7 +177,8 @@ $eks_tampil = array_values(array_filter($eksternal, function ($b) use ($f_sumber
 }));
 ?>
 <div class="grid-kpi">
-<div class="kartu kpi"><p class="kpi-label">Alokasi eksternal aktif</p><p class="kpi-angka"><?= $ringkas_eks['alokasi_aktif'] ?></p><p class="kpi-ket">baris alokasi, tanpa yang Dibatalkan</p></div>
+<?php $eks_di_proyek = count(array_filter($eksternal, fn ($bx) => isset($bx['serah']['keluar']) && !isset($bx['serah']['kembali']))); ?>
+<div class="kartu kpi"><p class="kpi-label">Alokasi eksternal</p><p class="kpi-angka"><?= $ringkas_eks['alokasi_aktif'] ?></p><p class="kpi-ket">baris tidak dibatalkan · <span data-kpi-eks-di-proyek><?= $eks_di_proyek ?></span> masih di proyek</p></div>
 <div class="kartu kpi"><p class="kpi-label">Unit Rental</p><p class="kpi-angka"><?= $ringkas_eks['unit_rental'] ?></p><p class="kpi-ket">kuantitas barang dari vendor</p></div>
 <div class="kartu kpi"><p class="kpi-label">Unit Milik Kru</p><p class="kpi-angka"><?= $ringkas_eks['unit_kru'] ?></p><p class="kpi-ket">kuantitas barang dibawa anggota tim</p></div>
 <div class="kartu kpi"><p class="kpi-label">Masih direncanakan</p><p class="kpi-angka<?= $ringkas_eks['direncanakan'] ? ' teks-kuning' : '' ?>"><?= $ringkas_eks['direncanakan'] ?></p><p class="kpi-ket">baris alokasi · <?= $ringkas_eks['unit_direncanakan'] ?> unit belum dikonfirmasi</p></div>
@@ -246,7 +247,7 @@ $sewa_pesan = array_filter([
 <tbody>
 <?php foreach ($eks_tampil as $b): ?>
 <?php $a = $b['alokasi']; $pr = $b['proyek']; ?>
-<tr>
+<tr id="alokasi-<?= (int) $a['id'] ?>">
 <td data-label="Barang"><strong class="teks-pecah"><?= e($a['nama_barang'] !== '' ? $a['nama_barang'] : 'Belum dicatat') ?></strong><div class="kecil redup">Untuk <?= e($b['kebutuhan']['nama'] ?? 'kebutuhan dihapus') ?></div><?= $a['catatan'] !== '' ? '<div class="kecil redup teks-pecah" data-catatan>Catatan (teks bebas): ' . e($a['catatan']) . '</div>' : '' ?></td>
 <td data-label="Jumlah" class="angka"><?= (int) $b['jumlah'] ?> unit</td>
 <td data-label="Proyek &amp; periode"><strong><?= e($pr['kode'] ?? '?') ?></strong><div class="kecil redup"><?= e($pr['nama'] ?? 'Proyek tidak ditemukan') ?><?= $pr ? ' · ' . e($pr['status']) : '' ?></div><div class="kecil">Pakai <?= e(rentang_tgl($a['tgl_mulai'], $a['tgl_selesai'])) ?></div></td>
@@ -255,6 +256,19 @@ $sewa_pesan = array_filter([
 <div class="kecil" data-pemeriksaan>
 <?php if ($a['status'] === 'Dibatalkan'): ?>
 <span class="redup">—</span>
+<?php elseif (isset($b['serah']['keluar'])): ?>
+<?php $sr = $b['serah']; $trx_k = db_cari('transaksi', $sr['trx_keluar'] ?? 0); $penuh = isset($sr['kembali']); $sebagian = !$penuh && ($sr['jumlah_kembali'] ?? 0) > 0; ?>
+<div class="status-proyek" <?= $penuh ? 'data-kembali-proyek' : 'data-dipakai-proyek' ?>>
+<?= $penuh ? badge('Sudah Kembali', 'Kembali dari proyek') : ($sebagian ? badge('Kembali Sebagian', 'Kembali sebagian') : badge('Sedang Keluar', 'Dipakai proyek')) ?>
+<div class="saldo-proyek" data-saldo-proyek>Keluar <?= (int) ($sr['jumlah_keluar'] ?? $b['jumlah']) ?> · Kembali <?= (int) ($sr['jumlah_kembali'] ?? 0) ?> · Sisa <?= (int) ($sr['sisa'] ?? 0) ?></div>
+<div class="redup">Keluar <?= e(tgl($sr['keluar'], 'singkat_jam')) ?> · <?= e($trx_k['kode'] ?? '?') ?><?= !empty($trx_k['penerima']) ? ' · diterima ' . e($trx_k['penerima']) : '' ?></div>
+<?php if (($sr['jumlah_kembali'] ?? 0) > 0): ?>
+<div class="redup">Kondisi kembali: <?= e(teks_kondisi($sr['kondisi_rincian'] ?? [])) ?><?= $penuh ? ' · ' . e(tgl($sr['kembali'], 'singkat_jam')) : '' ?></div>
+<?php endif; ?>
+<?php if ($penuh && $a['sumber'] === 'Milik Kru'): ?>
+<div class="redup">Sudah kembali dari proyek.</div>
+<?php endif; ?>
+</div>
 <?php elseif ($a['status'] !== 'Dikonfirmasi'): ?>
 <span class="redup">Menunggu konfirmasi</span>
 <?php elseif (!alokasi_bisa_diperiksa($a)): ?>
@@ -279,13 +293,26 @@ $sewa_pesan = array_filter([
 <div class="kecil">Jatuh tempo: <?= $r['jatuh_tempo'] ? e(tgl($r['jatuh_tempo'])) : 'Belum dicatat' ?><?= $r['jatuh_tempo'] && !$r['dikembalikan'] ? ' · ' . e($r['keterangan']) : '' ?></div>
 <div class="kecil redup">Penerimaan: <?= $r['diterima'] ? 'diterima ' . e(tgl($a['diterima_pada'], 'singkat_jam')) . ' · ' . e($a['kondisi_terima'] ?? '') : 'belum diterima' ?></div>
 <div class="kecil redup">Ke vendor: <?= $r['dikembalikan'] ? 'dikembalikan ' . e(tgl($a['dikembalikan_vendor_pada'], 'singkat_jam')) . ' · ' . e($a['kondisi_kembali_vendor'] ?? '') : 'belum dikembalikan' ?></div>
+<?php if ($r['dipakai_proyek']): ?>
+<div class="kecil teks-kuning" data-kunci-vendor>Masih dipakai proyek: <?= (int) ($b['serah']['sisa'] ?? 0) ?> dari <?= (int) ($b['serah']['jumlah_keluar'] ?? 0) ?> unit belum kembali. Kembalikan ke vendor baru bisa setelah seluruh unit kembali dari proyek.</div>
+<?php elseif (isset($b['serah']['kembali']) && !$r['dikembalikan']): ?>
+<div class="kecil" data-kewajiban-vendor>Sudah kembali dari proyek. Belum dikembalikan ke vendor; kewajiban vendor masih berjalan.</div>
+<?php if (($b['serah']['kondisi_ringkas'] ?? 'Baik') !== 'Baik'): ?>
+<div class="kecil teks-kuning" data-kondisi-proyek>Kembali dari proyek: <?= e(teks_kondisi($b['serah']['kondisi_rincian'] ?? [])) ?>. Periksa sebelum diserahkan ke vendor; status perbaikannya tidak tercatat di sini.</div>
+<?php endif; ?>
+<?php endif; ?>
 <?php if (boleh('rental.kelola') && ($r['bisa_terima'] || $r['bisa_tempo'] || $r['bisa_kembali'])): ?>
 <div class="aksi-rental">
 <?php if ($r['bisa_terima']): ?>
 <?= tombol_modal('dialog-terima-rental', 'Catat penerimaan', $kirim + ['waktu' => waktu_input(sekarang()), 'kondisi' => 'Baik'], 'package', 'btn btn-kecil') ?>
 <?php endif; ?>
 <?php if ($r['bisa_kembali']): ?>
-<?= tombol_modal('dialog-kembali-vendor', 'Kembalikan ke vendor', $kirim + ['waktu' => waktu_input(sekarang()), 'kondisi' => 'Baik'], 'truck', 'btn btn-kecil') ?>
+<?php
+$info_proyek = isset($b['serah']['kembali'])
+    ? 'Sudah kembali seluruhnya dari proyek ' . ($pr['kode'] ?? '?') . ' pada ' . tgl($b['serah']['kembali'], 'singkat_jam') . ': ' . teks_kondisi($b['serah']['kondisi_rincian'] ?? []) . '.' . (($b['serah']['kondisi_ringkas'] ?? 'Baik') !== 'Baik' ? ' Kondisi itu belum tentu sudah diperbaiki; periksa sebelum diserahkan ke vendor.' : '')
+    : 'Rental ini tidak tercatat keluar ke proyek melalui Serah Terima.';
+?>
+<?= tombol_modal('dialog-kembali-vendor', 'Kembalikan ke vendor', $kirim + ['waktu' => waktu_input(sekarang()), 'kondisi' => isset($b['serah']['kembali']) ? ($b['serah']['kondisi_ringkas'] ?: 'Baik') : 'Baik', '_proyek' => $info_proyek], 'truck', 'btn btn-kecil') ?>
 <?php endif; ?>
 <?php if ($r['bisa_tempo'] && $r['jatuh_tempo']): ?>
 <?= tombol_modal('dialog-perpanjang-rental', 'Perpanjang', $kirim + ['_tempo_lama' => tgl($r['jatuh_tempo'], 'panjang'), 'jatuh_tempo' => date('Y-m-d', strtotime($r['jatuh_tempo'] . ' +1 day'))], 'calendar-days', 'btn btn-sekunder btn-kecil') ?>
@@ -372,7 +399,7 @@ $berikut = jadwal_berikutnya($u['id']);
 <?= badge($status) ?>
 <?php if ($keluar): ?>
 <?php $pk = db_cari('proyek', $keluar['proyek_id']); ?>
-<div class="kecil <?= status_keluar($keluar) === 'Terlambat' ? 'teks-merah' : 'redup' ?>">Di <?= e($pk['kode'] ?? '?') ?> · tempo <?= e(tgl($keluar['tgl_selesai'], 'singkat')) ?><?= status_keluar($keluar) === 'Terlambat' ? ' · terlambat ' . hari_terlambat($keluar) . ' hari' : '' ?></div>
+<div class="kecil redup" data-unit-di-proyek>Masih di <?= e($pk['kode'] ?? '?') ?> · jadwal selesai <?= e(tgl($keluar['tgl_selesai'], 'singkat')) ?></div>
 <?php elseif ($berikut): ?>
 <?php $pb = db_cari('proyek', $berikut['proyek_id']); ?>
 <div class="kecil redup">Berikutnya <?= e($pb['kode'] ?? '?') ?> · <?= e(rentang_tgl($berikut['tgl_mulai'], $berikut['tgl_selesai'])) ?></div>
@@ -400,7 +427,7 @@ $berikut = jadwal_berikutnya($u['id']);
 <?php $insiden = daftar_insiden(); ?>
 <section class="kartu">
 <div class="kartu-kepala">
-<div><h2>Laporan insiden</h2><p><?= count($terbuka) ?> terbuka dari <?= count($insiden) ?> laporan. Insiden dari pengembalian tercatat otomatis.</p></div>
+<div><h2>Laporan insiden</h2><p><?= count($terbuka) ?> terbuka dari <?= count($insiden) ?> laporan. Insiden untuk unit inventaris Studio, termasuk yang tercatat otomatis saat pengembalian. Kondisi barang Rental dan Milik Kru tidak dikelola sebagai insiden; lihat Barang eksternal atau Serah Terima.</p></div>
 </div>
 <?php if (!$insiden): ?>
 <?= kosong('Belum ada insiden', 'Laporan kerusakan atau masalah teknis akan muncul di sini.') ?>
