@@ -71,28 +71,25 @@ if (is_post()) {
 
     if ($aksi === 'simpan_kebutuhan') {
         wajib_boleh('kebutuhan.kelola');
+        wajib_proyek_aktif($proyek);
         $id = (int) input('id');
-        $lama_k = $id ? db_cari('kebutuhan', $id) : null;
+        $lama_k = null;
+        if ($id) {
+            $lama_k = db_cari('kebutuhan', $id);
+            if (!$lama_k || (int) $lama_k['proyek_id'] !== $pid) {
+                flash('error', 'Kebutuhan tidak ditemukan di proyek ini.');
+                muat_ulang();
+            }
+        }
         $data = ['id' => $id ?: '', 'nama' => input('nama'), 'kategori_id' => input('kategori_id'), 'jumlah' => input('jumlah'), 'acuan' => input('acuan')];
-        $galat = [];
-        if (mb_strlen($data['nama']) < 2) {
-            $galat['nama'] = 'Nama kebutuhan wajib diisi.';
-        }
-        if (!db_cari('kategori', (int) $data['kategori_id'])) {
-            $galat['kategori_id'] = 'Pilih kategori.';
-        }
-        $jumlah = (int) $data['jumlah'];
-        if ($jumlah < 1 || $jumlah > 50) {
-            $galat['jumlah'] = 'Jumlah 1 sampai 50.';
-        } elseif ($lama_k && $jumlah < pemenuhan_kebutuhan($lama_k)['terisi']) {
-            $galat['jumlah'] = 'Sudah ada ' . pemenuhan_kebutuhan($lama_k)['terisi'] . ' alokasi. Kurangi alokasinya dulu.';
-        }
+        $galat = validasi_kebutuhan($data, $lama_k);
         if ($galat) {
             simpan_form('dialog-kebutuhan', $data, $galat);
             muat_ulang();
         }
+        $jumlah = (int) $data['jumlah'];
         $isi = ['nama' => $data['nama'], 'kategori_id' => (int) $data['kategori_id'], 'jumlah' => $jumlah, 'acuan' => $data['acuan']];
-        if ($lama_k && (int) $lama_k['proyek_id'] === $pid) {
+        if ($lama_k) {
             db_ubah('kebutuhan', $id, $isi);
             catat_riwayat('Kebutuhan', $proyek['kode'], $isi['nama'] . ' diperbarui', (string) $lama_k['jumlah'], (string) $jumlah);
             flash('sukses', 'Kebutuhan ' . $isi['nama'] . ' diperbarui.');
@@ -106,24 +103,35 @@ if (is_post()) {
 
     if ($aksi === 'hapus_kebutuhan') {
         wajib_boleh('kebutuhan.kelola');
+        wajib_proyek_aktif($proyek);
         $k = db_cari('kebutuhan', (int) input('id'));
-        if ($k && (int) $k['proyek_id'] === $pid) {
-            if (pemenuhan_kebutuhan($k)['terisi'] > 0) {
-                flash('error', 'Kebutuhan ' . $k['nama'] . ' masih punya alokasi aktif. Batalkan atau hapus alokasinya dulu.');
-                muat_ulang();
-            }
-            foreach (alokasi_kebutuhan($k['id']) as $a) {
-                db_hapus('alokasi', $a['id']);
-            }
-            db_hapus('kebutuhan', $k['id']);
-            catat_riwayat('Kebutuhan', $proyek['kode'], $k['nama'] . ' dihapus');
-            flash('sukses', 'Kebutuhan ' . $k['nama'] . ' dihapus.');
+        if (!$k || (int) $k['proyek_id'] !== $pid) {
+            flash('error', 'Kebutuhan tidak ditemukan di proyek ini.');
+            muat_ulang();
         }
+        if (pemenuhan_kebutuhan($k)['terisi'] > 0) {
+            flash('error', 'Kebutuhan ' . $k['nama'] . ' masih punya alokasi aktif. Batalkan atau hapus alokasinya dulu.');
+            muat_ulang();
+        }
+        if (kebutuhan_punya_serah($k['id'])) {
+            flash('error', 'Kebutuhan ' . $k['nama'] . ' punya riwayat serah terima, jadi tidak bisa dihapus.');
+            muat_ulang();
+        }
+        $id_terhapus = [];
+        foreach (alokasi_kebutuhan($k['id']) as $a) {
+            db_hapus('alokasi', $a['id']);
+            $id_terhapus[] = (int) $a['id'];
+        }
+        lepas_dari_checklist($pid, $id_terhapus);
+        db_hapus('kebutuhan', $k['id']);
+        catat_riwayat('Kebutuhan', $proyek['kode'], $k['nama'] . ' dihapus');
+        flash('sukses', 'Kebutuhan ' . $k['nama'] . ' dihapus.');
         muat_ulang();
     }
 
     if ($aksi === 'isi_preset') {
         wajib_boleh('kebutuhan.kelola');
+        wajib_proyek_aktif($proyek);
         $preset = db_cari('preset', (int) input('preset_id'));
         if (!$preset) {
             simpan_form('dialog-isi-preset', [], ['preset_id' => 'Pilih preset.']);
@@ -150,9 +158,10 @@ if (is_post()) {
 
     if ($aksi === 'tambah_alokasi') {
         wajib_boleh('alokasi.kelola');
+        wajib_proyek_aktif($proyek);
         $k = db_cari('kebutuhan', (int) input('kebutuhan_id'));
-        if (!$k || (int) $k['proyek_id'] !== $pid || !$bisa_ubah) {
-            flash('error', 'Kebutuhan tidak ditemukan atau proyek sudah ditutup.');
+        if (!$k || (int) $k['proyek_id'] !== $pid) {
+            flash('error', 'Kebutuhan tidak ditemukan di proyek ini.');
             muat_ulang();
         }
         $modal = 'dialog-alokasi-' . $k['id'];
@@ -162,13 +171,25 @@ if (is_post()) {
             'nama_barang' => input('nama_barang'),
             'vendor' => input('vendor'),
             'pemilik_id' => input('pemilik_id'),
-            'status' => input('status') === 'Direncanakan' ? 'Direncanakan' : 'Dikonfirmasi',
+            'jumlah' => input('jumlah', '1'),
+            'status' => input('status', 'Dikonfirmasi'),
             'catatan' => input('catatan'),
         ];
         $galat = [];
-        if (pemenuhan_kebutuhan($k)['terisi'] >= $k['jumlah']) {
-            flash('error', 'Kebutuhan ' . $k['nama'] . ' sudah terpenuhi.');
+        $sisa = pemenuhan_kebutuhan($k)['sisa'];
+        if ($sisa < 1) {
+            flash('error', 'Kebutuhan ' . $k['nama'] . ' sudah teralokasi penuh. Batalkan alokasi lain dulu jika ingin mengganti barang.');
             muat_ulang();
+        }
+        if (!in_array($data['status'], ['Dikonfirmasi', 'Direncanakan'], true)) {
+            $galat['status'] = 'Status alokasi baru hanya Dikonfirmasi atau Direncanakan.';
+        }
+        if ($data['sumber'] === 'Studio') {
+            $data['jumlah'] = '1';
+        } elseif (!preg_match('/^\d{1,3}$/', $data['jumlah']) || (int) $data['jumlah'] < 1) {
+            $galat['jumlah'] = 'Jumlah harus bilangan bulat minimal 1.';
+        } elseif ((int) $data['jumlah'] > $sisa) {
+            $galat['jumlah'] = 'Melebihi sisa kebutuhan. Hanya ' . $sisa . ' unit lagi yang bisa dialokasikan.';
         }
         if (!in_array($data['sumber'], daftar_sumber(), true)) {
             $galat['sumber'] = 'Pilih sumber barang.';
@@ -176,6 +197,8 @@ if (is_post()) {
             $unit = db_cari('perlengkapan', (int) $data['perlengkapan_id']);
             if (!$unit) {
                 $galat['perlengkapan_id'] = 'Pilih unit.';
+            } elseif ((int) $unit['kategori_id'] !== (int) $k['kategori_id']) {
+                $galat['perlengkapan_id'] = $unit['kode_unit'] . ' berkategori ' . nama_kategori($unit['kategori_id']) . ', sedangkan kebutuhan ini berkategori ' . nama_kategori($k['kategori_id']) . '. Pilih unit dengan kategori yang sama.';
             } else {
                 $cek = cek_unit_untuk_proyek($unit, $proyek);
                 if ($cek['blokir'] !== '') {
@@ -207,37 +230,51 @@ if (is_post()) {
             'nama_barang' => $studio ? '' : $data['nama_barang'],
             'vendor' => $data['sumber'] === 'Rental' ? $data['vendor'] : '',
             'pemilik_id' => $data['sumber'] === 'Milik Kru' ? (int) $data['pemilik_id'] : null,
+            'jumlah' => (int) $data['jumlah'],
             'tgl_mulai' => $mulai,
             'tgl_selesai' => $selesai,
             'status' => $data['status'],
             'catatan' => $data['catatan'],
         ]);
+        lepas_dari_checklist($pid, [$baru]);
         $a = db_cari('alokasi', $baru);
-        catat_riwayat('Alokasi', ($studio ? keterangan_sumber($a) . ' · ' : nama_barang_alokasi($a) . ' · ') . $proyek['kode'], $data['sumber'] . ': ' . nama_barang_alokasi($a) . ' untuk ' . $k['nama']);
-        flash('sukses', nama_barang_alokasi($a) . ' dialokasikan untuk ' . $k['nama'] . '.');
+        $kali =jumlah_alokasi($a) > 1 ? ' × ' . jumlah_alokasi($a) : '';
+        catat_riwayat('Alokasi', ($studio ? keterangan_sumber($a) . ' · ' : nama_barang_alokasi($a) . ' · ') . $proyek['kode'], $data['sumber'] . ': ' . nama_barang_alokasi($a) . $kali . ' untuk ' . $k['nama']);
+        flash('sukses', nama_barang_alokasi($a) . $kali . ' dialokasikan untuk ' . $k['nama'] . '.');
         muat_ulang();
     }
 
     if (in_array($aksi, ['konfirmasi_alokasi', 'batalkan_alokasi', 'hapus_alokasi'], true)) {
         wajib_boleh('alokasi.kelola');
+        wajib_proyek_aktif($proyek);
         $a = db_cari('alokasi', (int) input('id'));
         if (!$a || (int) $a['proyek_id'] !== $pid) {
+            flash('error', 'Alokasi tidak ditemukan di proyek ini.');
             muat_ulang();
         }
         $serah = serah_alokasi($a['id']);
         $nama = nama_barang_alokasi($a);
-        if ($aksi === 'konfirmasi_alokasi') {
+        $unit = $a['sumber'] === 'Studio' ? db_cari('perlengkapan', (int) $a['perlengkapan_id']) : null;
+        if ($serah) {
+            flash('error', $nama . ' sudah tercatat di serah terima' . (isset($serah['kembali']) ? ' (keluar dan sudah dikembalikan)' : ' dan masih di luar') . '. Alokasinya dikunci agar riwayat transaksi tetap sah.');
+        } elseif ($aksi === 'konfirmasi_alokasi' && $a['status'] !== 'Direncanakan') {
+            flash('error', 'Hanya alokasi berstatus Direncanakan yang bisa dikonfirmasi. ' . $nama . ' berstatus ' . $a['status'] . '.');
+        } elseif ($aksi === 'konfirmasi_alokasi' && $a['sumber'] === 'Studio' && (!$unit || $unit['status_aktif'] !== 'Aktif' || $unit['kondisi'] !== 'Baik')) {
+            flash('error', ($unit ? $unit['kode_unit'] . ' sedang ' . ($unit['status_aktif'] !== 'Aktif' ? 'nonaktif' : 'berkondisi ' . $unit['kondisi']) : 'Unit sudah dihapus') . ', jadi alokasinya belum bisa dikonfirmasi.');
+        } elseif ($aksi === 'konfirmasi_alokasi') {
             db_ubah('alokasi', $a['id'], ['status' => 'Dikonfirmasi']);
+            lepas_dari_checklist($pid, [(int) $a['id']]);
             catat_riwayat('Alokasi', $nama . ' · ' . $proyek['kode'], 'Alokasi dikonfirmasi', $a['status'], 'Dikonfirmasi');
-            flash('sukses', $nama . ' dikonfirmasi.');
-        } elseif (isset($serah['keluar'])) {
-            flash('error', $nama . ' sudah pernah diserahkan, jadi tidak bisa dibatalkan atau dihapus.');
+            flash('sukses', $nama . ' dikonfirmasi. Centang di Persiapan setelah barang diperiksa.');
+        } elseif ($aksi === 'batalkan_alokasi' && $a['status'] === 'Dibatalkan') {
+            flash('error', 'Alokasi ' . $nama . ' sudah dibatalkan sebelumnya.');
         } elseif ($aksi === 'batalkan_alokasi') {
             db_ubah('alokasi', $a['id'], ['status' => 'Dibatalkan']);
             catat_riwayat('Alokasi', $nama . ' · ' . $proyek['kode'], 'Alokasi dibatalkan', $a['status'], 'Dibatalkan');
             flash('sukses', 'Alokasi ' . $nama . ' dibatalkan.');
         } else {
             db_hapus('alokasi', $a['id']);
+            lepas_dari_checklist($pid, [(int) $a['id']]);
             catat_riwayat('Alokasi', $nama . ' · ' . $proyek['kode'], 'Alokasi dihapus');
             flash('sukses', 'Alokasi ' . $nama . ' dihapus.');
         }
@@ -246,13 +283,25 @@ if (is_post()) {
 
     if ($aksi === 'simpan_persiapan') {
         wajib_boleh('persiapan.kelola');
-        $aktif = array_map(fn ($a) => (int) $a['id'], alokasi_proyek($pid, true));
-        $pilih = array_values(array_intersect(array_map('intval', input_daftar('diperiksa')), $aktif));
+        wajib_proyek_aktif($proyek);
+        $boleh_periksa = array_map(fn ($a) => (int) $a['id'], array_filter(alokasi_proyek($pid, true), fn ($a) => $a['status'] === 'Dikonfirmasi'));
+        $pilih = array_values(array_intersect(array_map('intval', input_daftar('diperiksa')), $boleh_periksa));
         $rekam = ambil_persiapan($pid);
         db_ubah('persiapan', $rekam['id'], ['diperiksa' => $pilih, 'diperbarui_pada' => date('Y-m-d H:i', strtotime(sekarang())), 'diperbarui_oleh' => $pengguna['id']]);
-        $total = count($aktif);
-        catat_riwayat('Persiapan', $proyek['kode'], count($pilih) . ' dari ' . $total . ' barang diperiksa');
-        flash('sukses', count($pilih) === $total && $total > 0 ? 'Persiapan lengkap. Barang studio siap diserahkan di menu Serah Terima.' : 'Persiapan disimpan: ' . count($pilih) . ' dari ' . $total . ' barang diperiksa.');
+        $hasil = persiapan_proyek($proyek);
+        catat_riwayat('Persiapan', $proyek['kode'], $hasil['selesai'] . ' dari ' . $hasil['total'] . ' barang diperiksa');
+        if ($hasil['status'] === 'Siap') {
+            flash('sukses', 'Persiapan lengkap. Barang studio siap diserahkan di menu Serah Terima.');
+        } else {
+            $catatan = [];
+            if ($hasil['menunggu'] > 0) {
+                $catatan[] = $hasil['menunggu'] . ' alokasi masih Direncanakan dan belum bisa diperiksa';
+            }
+            if ($hasil['kurang'] > 0) {
+                $catatan[] = $hasil['kurang'] . ' unit kebutuhan belum dialokasikan';
+            }
+            flash('sukses', 'Persiapan disimpan: ' . $hasil['selesai'] . ' dari ' . $hasil['total'] . ' barang diperiksa' . ($catatan ? '. Belum siap: ' . implode(', ', $catatan) . '.' : '.'));
+        }
         muat_ulang();
     }
 
@@ -273,13 +322,16 @@ if (!isset($tab_daftar[$tab])) {
 $anggota = anggota_proyek($pid);
 $kebutuhan = kebutuhan_proyek($pid);
 $persiapan = persiapan_proyek($proyek);
-$pemenuhan_total = ['terisi' => 0, 'jumlah' => 0];
+$pemenuhan_total = ['terisi' => 0, 'jumlah' => 0, 'dikonfirmasi' => 0, 'diperiksa' => 0];
 foreach ($kebutuhan as $k) {
     $p = pemenuhan_kebutuhan($k);
     $pemenuhan_total['terisi'] += min($p['terisi'], $p['jumlah']);
     $pemenuhan_total['jumlah'] += $p['jumlah'];
+    $pemenuhan_total['dikonfirmasi'] += min($p['dikonfirmasi'], $p['jumlah']);
+    $pemenuhan_total['diperiksa'] += min($p['diperiksa'], $p['jumlah']);
 }
 $di_luar = unit_belum_kembali($pid);
+$id_diperiksa = id_diperiksa($pid);
 $dasar = 'pages/proyek-detail.php?id=' . $pid;
 
 $halaman = ['menu' => 'proyek', 'bagian' => $pengguna['peran'] === 'us' ? 'Proyek Saya' : 'Proyek & Acara', 'judul' => $proyek['kode']];
@@ -319,11 +371,12 @@ require ROOT . '/includes/layout_head.php';
 <p class="kpi-label">Kebutuhan teralokasi</p>
 <p class="kpi-angka"><?= $pemenuhan_total['terisi'] ?><span class="kpi-dari">/<?= $pemenuhan_total['jumlah'] ?></span></p>
 <?= bilah(persen($pemenuhan_total['terisi'], $pemenuhan_total['jumlah']), $pemenuhan_total['terisi'] < $pemenuhan_total['jumlah'] ? 'kuning' : 'hijau') ?>
+<p class="kpi-ket"><?= $pemenuhan_total['dikonfirmasi'] ?> dikonfirmasi · <?= $pemenuhan_total['diperiksa'] ?> diperiksa di persiapan</p>
 </div>
 <div class="kartu kpi">
 <p class="kpi-label">Barang diperiksa</p>
 <p class="kpi-angka"><?= $persiapan['selesai'] ?><span class="kpi-dari">/<?= $persiapan['total'] ?></span></p>
-<?= bilah($persiapan['persen'], $persiapan['lewat'] ? 'merah' : ($persiapan['persen'] === 100 ? 'hijau' : 'tinta')) ?>
+<?= bilah($persiapan['persen'], $persiapan['lewat'] ? 'merah' : ($persiapan['status'] === 'Siap' ? 'hijau' : 'tinta')) ?>
 </div>
 <div class="kartu kpi">
 <p class="kpi-label">Unit studio di luar</p>
@@ -379,7 +432,7 @@ require ROOT . '/includes/layout_head.php';
 <div class="kartu-kepala">
 <div>
 <h2>Kebutuhan &amp; alokasi</h2>
-<p>Super Admin menentukan kebutuhan, Petugas Inventaris memenuhinya dari studio, rental, atau barang milik kru.</p>
+<p>Super Admin atau Petugas Inventaris menentukan kebutuhan, lalu memenuhinya dari studio, rental, atau barang milik kru.</p>
 </div>
 <?php if (boleh('kebutuhan.kelola') && $bisa_ubah): ?>
 <div class="kepala-aksi">
@@ -389,7 +442,7 @@ require ROOT . '/includes/layout_head.php';
 <?php endif; ?>
 </div>
 <?php if (!$kebutuhan): ?>
-<?= kosong('Belum ada kebutuhan', boleh('kebutuhan.kelola') ? 'Tambahkan kebutuhan satu per satu atau isi cepat dari preset.' : 'Kebutuhan barang akan diisi oleh Super Admin.') ?>
+<?= kosong('Belum ada kebutuhan', boleh('kebutuhan.kelola') ? 'Tambahkan kebutuhan satu per satu atau isi cepat dari preset.' : 'Kebutuhan barang akan diisi oleh Super Admin atau Petugas Inventaris.') ?>
 <?php else: ?>
 <div class="kebutuhan-daftar">
 <?php foreach ($kebutuhan as $k): ?>
@@ -399,8 +452,11 @@ require ROOT . '/includes/layout_head.php';
 <div class="daftar-utama">
 <h3><?= e($k['nama']) ?> <span class="redup">× <?= (int) $k['jumlah'] ?></span></h3>
 <p class="daftar-sub"><?= e(nama_kategori($k['kategori_id'])) ?><?= $k['acuan'] !== '' ? ' · acuan ' . e($k['acuan']) : '' ?></p>
+<p class="daftar-sub" data-pemenuhan><?= e(rincian_pemenuhan($p)) ?></p>
 </div>
 <?= badge($p['status'], $p['terisi'] . '/' . $p['jumlah'] . ' · ' . $p['status']) ?>
+<?= $p['pergerakan'] !== '' ? badge($p['pergerakan']) : '' ?>
+<?= $p['kembali_bermasalah'] > 0 ? badge('Rusak', $p['kembali_bermasalah'] . ' kembali bermasalah') : '' ?>
 <div class="aksi-baris">
 <?php if (boleh('alokasi.kelola') && $bisa_ubah && $p['terisi'] < $p['jumlah']): ?>
 <?= tombol_modal('dialog-alokasi-' . $k['id'], 'Alokasikan', [], 'plus', 'btn btn-kecil') ?>
@@ -420,18 +476,21 @@ require ROOT . '/includes/layout_head.php';
 <li class="alokasi<?= $batal ? ' alokasi-batal' : '' ?>">
 <span class="sumber sumber-<?= e(strtolower(str_replace(' ', '-', $a['sumber']))) ?>"><?= ikon($a['sumber'] === 'Studio' ? 'camera' : ($a['sumber'] === 'Rental' ? 'truck' : 'user'), 14) ?><?= e($a['sumber']) ?></span>
 <div class="daftar-utama">
-<p class="daftar-judul"><?= e(nama_barang_alokasi($a)) ?></p>
+<p class="daftar-judul"><?= e(nama_barang_alokasi($a)) ?><?= jumlah_alokasi($a) > 1 ? ' <span class="redup">× ' . jumlah_alokasi($a) . '</span>' : '' ?></p>
 <p class="daftar-sub"><?= e(keterangan_sumber($a)) ?><?= $a['catatan'] !== '' ? ' · ' . e($a['catatan']) : '' ?></p>
 </div>
 <div class="alokasi-status">
 <?= badge($a['status'], label_status_alokasi($a)) ?>
+<?php if (alokasi_siap($a, $id_diperiksa)): ?>
+<?= $a['sumber'] === 'Studio' ? badge('Siap', 'Siap · diperiksa') : badge('Diperiksa Petugas') ?>
+<?php endif; ?>
 <?php if ($a['sumber'] === 'Studio' && isset($serah['kembali'])): ?>
-<?= badge('Kembali') ?>
+<?= ($serah['kondisi_kembali'] ?? 'Baik') === 'Baik' ? badge('Kembali') : badge($serah['kondisi_kembali'], 'Kembali · ' . $serah['kondisi_kembali']) ?>
 <?php elseif ($a['sumber'] === 'Studio' && isset($serah['keluar'])): ?>
 <?= badge(status_keluar($a), 'Keluar · ' . status_keluar($a)) ?>
 <?php endif; ?>
 </div>
-<?php if (boleh('alokasi.kelola') && $bisa_ubah && !$batal && !isset($serah['keluar'])): ?>
+<?php if (boleh('alokasi.kelola') && $bisa_ubah && !$batal && !$serah): ?>
 <div class="aksi-baris">
 <?php if ($a['status'] === 'Direncanakan'): ?>
 <?= tombol_konfirmasi(['label' => 'Konfirmasi', 'ikon' => 'check', 'aksi' => 'konfirmasi_alokasi', 'id' => $a['id'], 'judul' => 'Konfirmasi alokasi?', 'pesan' => nama_barang_alokasi($a) . ' (' . keterangan_sumber($a) . ') dipastikan tersedia untuk proyek ini.', 'tombol' => 'Konfirmasi', 'aman' => true]) ?>
@@ -475,20 +534,23 @@ require ROOT . '/includes/layout_head.php';
 <?= bilah($persiapan['persen'], $persiapan['lewat'] ? 'merah' : 'tinta') ?>
 <span><strong data-progres-angka><?= $persiapan['selesai'] ?></strong> dari <?= $persiapan['total'] ?> diperiksa</span>
 </div>
+<?php if ($persiapan['menunggu'] > 0 || $persiapan['kurang'] > 0): ?>
+<p class="kecil teks-kuning"><?= $persiapan['menunggu'] > 0 ? e($persiapan['menunggu'] . ' alokasi masih Direncanakan') : '' ?><?= $persiapan['menunggu'] > 0 && $persiapan['kurang'] > 0 ? ' · ' : '' ?><?= $persiapan['kurang'] > 0 ? e($persiapan['kurang'] . ' unit kebutuhan belum dialokasikan') : '' ?></p>
+<?php endif; ?>
 <?php if ($bisa_centang): ?>
 <button type="button" class="btn btn-sekunder btn-kecil" data-centang-semua>Centang semua</button>
 <?php endif; ?>
 </div>
 <ul class="ceklist">
 <?php foreach ($persiapan['item'] as $a): ?>
-<?php $k = db_cari('kebutuhan', $a['kebutuhan_id']); $tercentang = in_array((int) $a['id'], $persiapan['diperiksa'], true); ?>
+<?php $k = db_cari('kebutuhan', $a['kebutuhan_id']); $tercentang = in_array((int) $a['id'], $persiapan['diperiksa'], true); $menunggu = $a['status'] !== 'Dikonfirmasi'; ?>
 <li>
-<label class="ceklist-item">
-<input type="checkbox" name="diperiksa[]" value="<?= (int) $a['id'] ?>"<?= $tercentang ? ' checked' : '' ?><?= $bisa_centang ? '' : ' disabled' ?>>
+<label class="ceklist-item<?= $menunggu ? ' ceklist-mati' : '' ?>">
+<input type="checkbox" name="diperiksa[]" value="<?= (int) $a['id'] ?>"<?= $tercentang ? ' checked' : '' ?><?= $bisa_centang && !$menunggu ? '' : ' disabled' ?>>
 <span class="ceklist-kotak" aria-hidden="true"><?= ikon('check', 14) ?></span>
 <span class="daftar-utama">
-<span class="daftar-judul"><?= e(nama_barang_alokasi($a)) ?></span>
-<span class="daftar-sub"><?= e(keterangan_sumber($a)) ?> · untuk <?= e($k['nama'] ?? '—') ?></span>
+<span class="daftar-judul"><?= e(nama_barang_alokasi($a)) ?><?= jumlah_alokasi($a) > 1 ? ' × ' . jumlah_alokasi($a) : '' ?></span>
+<span class="daftar-sub"><?= e(keterangan_sumber($a)) ?> · untuk <?= e($k['nama'] ?? '—') ?><?= $menunggu ? ' · <span class="teks-kuning">' . e(label_status_alokasi($a)) . ', belum bisa diperiksa</span>' : '' ?></span>
 </span>
 <span class="sumber sumber-<?= e(strtolower(str_replace(' ', '-', $a['sumber']))) ?>"><?= e($a['sumber']) ?></span>
 </label>
@@ -497,7 +559,7 @@ require ROOT . '/includes/layout_head.php';
 </ul>
 <?php if ($bisa_centang): ?>
 <div class="kartu-kaki">
-<p class="kecil redup">Centang barang yang sudah dicek fisik dan siap dibawa, termasuk barang rental dan milik kru.</p>
+<p class="kecil redup">Centang barang yang sudah dicek fisik dan siap dibawa. Untuk Rental dan Kru, centang ini dicatat sebagai pemeriksaan petugas, belum bukti penerimaan dari vendor atau serah terima.</p>
 <button type="submit" class="btn">Simpan persiapan</button>
 </div>
 <?php endif; ?>

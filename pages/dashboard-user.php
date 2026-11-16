@@ -47,10 +47,10 @@ judul_halaman('Halo, ' . nama_depan($pengguna['nama']), tgl(HARI_INI, 'panjang')
 <div>
 <p class="label-kecil">Kesiapan barang</p>
 <div class="progres progres-besar">
-<?= bilah($prs['persen'], $prs['lewat'] ? 'merah' : ($prs['persen'] === 100 ? 'hijau' : 'tinta')) ?>
+<?= bilah($prs['persen'], $prs['lewat'] ? 'merah' : ($prs['status'] === 'Siap' ? 'hijau' : 'tinta')) ?>
 <span><strong><?= $prs['selesai'] ?></strong> dari <?= $prs['total'] ?> diperiksa</span>
 </div>
-<p class="kecil redup"><?= $prs['persen'] === 100 ? 'Semua barang sudah dicek petugas.' : 'Petugas Inventaris masih menyiapkan barang. Batas ' . e(tgl($berikut['deadline_persiapan'], 'singkat_jam')) . '.' ?></p>
+<p class="kecil redup"><?= $prs['status'] === 'Siap' ? 'Semua barang sudah dicek petugas.' : 'Petugas Inventaris masih menyiapkan barang. Batas ' . e(tgl($berikut['deadline_persiapan'], 'singkat_jam')) . '.' ?></p>
 </div>
 <a href="<?= e(url('pages/proyek-detail.php?id=' . $berikut['id'])) ?>" class="btn btn-sekunder"><span>Lihat detail proyek</span><?= ikon('chevron-right', 16) ?></a>
 </div>

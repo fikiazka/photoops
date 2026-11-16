@@ -343,10 +343,10 @@ function ikon(string $nama, int $ukuran = 18): string
 function warna_status(string $status): string
 {
     static $peta = [
-        'hijau' => ['Selesai', 'Baik', 'Tersedia', 'Terpenuhi', 'Siap', 'Disetujui', 'Dikonfirmasi', 'Kembali', 'Aktif', 'Tepat waktu'],
-        'biru' => ['Dijadwalkan', 'Berlangsung', 'Dalam Persiapan', 'Ditangani', 'Dipinjam', 'Hari ini', 'Keluar', 'Petugas Inventaris'],
-        'kuning' => ['Maintenance', 'Sebagian', 'Menunggu', 'Direncanakan', 'Masih keluar'],
-        'merah' => ['Terlambat', 'Rusak', 'Hilang', 'Dilaporkan', 'Bentrok', 'Belum Terpenuhi', 'Lewat deadline', 'Tidak Tersedia', 'Nonaktif'],
+        'hijau' => ['Selesai', 'Baik', 'Tersedia', 'Terpenuhi', 'Siap', 'Disetujui', 'Dikonfirmasi', 'Kembali', 'Aktif', 'Tepat waktu', 'Sudah Kembali', 'Studio Sudah Kembali'],
+        'biru' => ['Dijadwalkan', 'Berlangsung', 'Dalam Persiapan', 'Belum Diperiksa', 'Diperiksa Petugas', 'Sedang Keluar', 'Ditangani', 'Dipinjam', 'Hari ini', 'Keluar', 'Petugas Inventaris'],
+        'kuning' => ['Maintenance', 'Sebagian', 'Menunggu', 'Menunggu Konfirmasi', 'Pengembalian Sebagian', 'Direncanakan', 'Masih keluar'],
+        'merah' => ['Terlambat', 'Rusak', 'Belum Kembali','Hilang', 'Dilaporkan', 'Bentrok', 'Belum Terpenuhi', 'Lewat deadline', 'Tidak Tersedia', 'Nonaktif'],
         'tinta' => ['PIC', 'Super Admin'],
     ];
     foreach ($peta as $warna => $daftar) {

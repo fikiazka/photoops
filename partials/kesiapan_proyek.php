@@ -20,7 +20,7 @@ $mendatang = proyek_mendatang(14);
 <span class="daftar-utama">
 <span class="daftar-judul"><?= e($p['kode']) ?> · <?= e($p['nama']) ?></span>
 <span class="progres">
-<?= bilah($prs['persen'], $prs['lewat'] ? 'merah' : ($prs['persen'] === 100 ? 'hijau' : 'tinta')) ?>
+<?= bilah($prs['persen'], $prs['lewat'] ? 'merah' : ($prs['status'] === 'Siap' ? 'hijau' : 'tinta')) ?>
 <span class="kecil"><?= $prs['selesai'] ?>/<?= $prs['total'] ?></span>
 </span>
 </span>

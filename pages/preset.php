@@ -118,7 +118,7 @@ require ROOT . '/includes/layout_head.php';
 
 judul_halaman(
     'Preset Perlengkapan',
-    'Paket kebutuhan standar per jenis acara. Super Admin memakainya untuk mengisi kebutuhan proyek dengan cepat.',
+    'Paket kebutuhan standar per jenis acara. Super Admin dan Petugas Inventaris memakainya untuk mengisi kebutuhan proyek dengan cepat.',
     $kelola ? tombol_modal('dialog-preset', 'Preset baru', ['_judul' => 'Preset baru'], 'plus') : ''
 );
 ?>
