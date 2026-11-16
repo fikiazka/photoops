@@ -29,6 +29,7 @@ function hak_akses(): array
         'preset.kelola' => ['sa', 'pi'],
         'perlengkapan.lihat' => ['sa', 'pi'],
         'perlengkapan.kelola' => ['sa', 'pi'],
+        'rental.kelola' => ['sa', 'pi'],
         'alokasi.kelola' => ['sa', 'pi'],
         'persiapan.kelola' => ['sa', 'pi'],
         'serah_terima.lihat' => ['sa', 'pi'],

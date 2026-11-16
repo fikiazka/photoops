@@ -28,6 +28,7 @@ function ikon_aksi(string $aksi): string
         'Pengembalian' => 'arrow-down-left',
         'Insiden' => 'triangle-alert',
         'Alokasi' => 'package',
+        'Rental' => 'truck',
         'Persiapan' => 'list-checks',
         'Proyek' => 'calendar-days',
         'Kebutuhan' => 'list-checks',

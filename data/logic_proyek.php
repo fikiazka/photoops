@@ -203,9 +203,14 @@ function lepas_dari_checklist(int $proyek_id, array $alokasi_ids): void
     }
 }
 
+function alokasi_bisa_diperiksa(array $alokasi): bool
+{
+    return $alokasi['status'] === 'Dikonfirmasi' && ($alokasi['sumber'] !== 'Rental' || !empty($alokasi['diterima_pada']));
+}
+
 function alokasi_diperiksa(array $alokasi, array $diperiksa): bool
 {
-    return $alokasi['status'] === 'Dikonfirmasi' && in_array((int) $alokasi['id'], $diperiksa, true);
+    return alokasi_bisa_diperiksa($alokasi) && in_array((int) $alokasi['id'], $diperiksa, true);
 }
 
 function alokasi_siap(array $alokasi, array $diperiksa): bool
@@ -218,7 +223,7 @@ function alokasi_siap(array $alokasi, array $diperiksa): bool
         return false;
     }
     if ($alokasi['sumber'] !== 'Studio') {
-        return true;
+        return empty($alokasi['dikembalikan_vendor_pada']);
     }
     $unit = db_cari('perlengkapan', (int) $alokasi['perlengkapan_id']);
     return $unit && $unit['status_aktif'] === 'Aktif' && $unit['kondisi'] === 'Baik' && !alokasi_keluar_unit($unit['id']);
@@ -374,11 +379,13 @@ function persiapan_proyek(array $proyek): array
 {
     $item = alokasi_proyek($proyek['id'], true);
     $rekam = rekam_persiapan((int) $proyek['id']);
-    $id_dikonfirmasi = array_map(fn ($a) => (int) $a['id'], array_filter($item, fn ($a) => $a['status'] === 'Dikonfirmasi'));
-    $diperiksa = array_values(array_intersect(array_map('intval', $rekam['diperiksa'] ?? []), $id_dikonfirmasi));
+    $tersimpan = array_map('intval', $rekam['diperiksa'] ?? []);
+    $id_bisa = array_map(fn ($a) => (int) $a['id'], array_filter($item, 'alokasi_bisa_diperiksa'));
+    $id_tunggu_vendor = array_map(fn ($a) => (int) $a['id'], array_filter($item, fn ($a) => $a['status'] === 'Dikonfirmasi' && !alokasi_bisa_diperiksa($a)));
+    $diperiksa = array_values(array_intersect($tersimpan, $id_bisa));
     $total = count($item);
     $selesai = count($diperiksa);
-    $menunggu = $total - count($id_dikonfirmasi);
+    $menunggu = count(array_filter($item, fn ($a) => $a['status'] !== 'Dikonfirmasi'));
     $kurang = 0;
     foreach (kebutuhan_proyek((int) $proyek['id']) as $kebutuhan) {
         $kurang += pemenuhan_kebutuhan($kebutuhan)['sisa'];
@@ -399,6 +406,8 @@ function persiapan_proyek(array $proyek): array
         'persen' => persen($selesai, $total),
         'status' => $status,
         'menunggu' => $menunggu,
+        'menunggu_vendor' => count($id_tunggu_vendor),
+        'centang_tertahan' => array_values(array_intersect($tersimpan, $id_tunggu_vendor)),
         'kurang' => $kurang,
         'lewat' => $lewat,
         'diperbarui_pada' => $rekam['diperbarui_pada'] ?? null,
@@ -529,6 +538,22 @@ function hapus_proyek(int $proyek_id): void
         }
     }
     db_hapus('proyek', $proyek_id);
+}
+
+function rental_penghalang_hapus(int $proyek_id): array
+{
+    $hasil = ['catatan_vendor' => [], 'komitmen' => []];
+    foreach (db('alokasi') as $alokasi) {
+        if ((int) $alokasi['proyek_id'] !== $proyek_id || $alokasi['sumber'] !== 'Rental') {
+            continue;
+        }
+        if (!empty($alokasi['diterima_pada']) || !empty($alokasi['dikembalikan_vendor_pada'])) {
+            $hasil['catatan_vendor'][] = $alokasi['nama_barang'];
+        } elseif ($alokasi['status'] === 'Dikonfirmasi') {
+            $hasil['komitmen'][] = $alokasi['nama_barang'];
+        }
+    }
+    return $hasil;
 }
 
 function proyek_punya_transaksi(int $proyek_id): bool

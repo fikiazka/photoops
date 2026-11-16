@@ -102,14 +102,44 @@ if (is_post()) {
         muat_ulang();
     }
 
+    $modal_rental = ['terima_rental' => 'dialog-terima-rental', 'atur_jatuh_tempo' => 'dialog-atur-tempo', 'perpanjang_rental' => 'dialog-perpanjang-rental', 'kembalikan_vendor' => 'dialog-kembali-vendor'];
+    if (isset($modal_rental[$aksi])) {
+        wajib_boleh('rental.kelola');
+        $a = db_cari('alokasi', (int) input('id'));
+        $pr = $a ? db_cari('proyek', (int) $a['proyek_id']) : null;
+        if (!$a || !$pr || input('proyek_id') !== (string) $a['proyek_id']) {
+            flash('error', 'Alokasi rental tidak ditemukan pada proyek tersebut.');
+            muat_ulang();
+        }
+        if ($a['sumber'] !== 'Rental') {
+            flash('error', 'Aksi ini hanya untuk barang Rental. ' . nama_barang_alokasi($a) . ' bersumber ' . $a['sumber'] . '.');
+            muat_ulang();
+        }
+        $hasil = proses_aksi_rental($aksi, $a, $pengguna);
+        if (!empty($hasil['galat'])) {
+            $lama = ['id' => $a['id'], 'proyek_id' => $a['proyek_id'], '_barang' => $a['nama_barang'] . ' · ' . jumlah_alokasi($a) . ' unit · ' . $pr['kode'], '_vendor' => $a['vendor'], '_jumlah' => jumlah_alokasi($a) . ' unit', '_tempo_lama' => !empty($a['jatuh_tempo_vendor']) ? tgl($a['jatuh_tempo_vendor'], 'panjang') : ''];
+            foreach (['jumlah', 'waktu', 'kondisi', 'catatan', 'jatuh_tempo', 'sewa_mulai', 'kontak_vendor', 'alasan'] as $kunci) {
+                $lama[$kunci] = input($kunci);
+            }
+            simpan_form($modal_rental[$aksi], $lama, $hasil['galat']);
+        } elseif (!empty($hasil['umum'])) {
+            flash('error', $hasil['umum']);
+        } else {
+            flash('sukses', $hasil['sukses']);
+        }
+        muat_ulang();
+    }
+
     muat_ulang();
 }
 
-$tab = query('tab') === 'insiden' ? 'insiden' : 'unit';
+$tab = in_array(query('tab'), ['eksternal', 'insiden'], true) ? query('tab') : 'unit';
 $kelola = boleh('perlengkapan.kelola');
 $ringkas = ringkasan_pemakaian();
 $frekuensi = frekuensi_pakai();
 $terbuka = insiden_terbuka();
+$eksternal = daftar_barang_eksternal();
+$ringkas_eks = ringkasan_eksternal($eksternal);
 
 $halaman = ['menu' => 'perlengkapan', 'bagian' => 'Inventaris', 'judul' => 'Perlengkapan'];
 require ROOT . '/includes/layout_head.php';
@@ -118,19 +148,163 @@ $aksi_kepala = '';
 if (boleh('insiden.kelola')) {
     $aksi_kepala .= tombol_modal('dialog-insiden', 'Laporkan insiden', [], 'triangle-alert', 'btn btn-sekunder');
 }
-if ($kelola) {
+if ($kelola && $tab !== 'eksternal') {
     $aksi_kepala .= tombol_modal('dialog-unit', 'Tambah unit', ['_judul' => 'Tambah unit'], 'plus');
 }
-judul_halaman('Perlengkapan', 'Inventaris unit studio. Status pemakaian dihitung otomatis dari alokasi, serah terima, dan kondisi unit.', $aksi_kepala);
+judul_halaman('Perlengkapan', $tab === 'eksternal' ? 'Barang Rental dan Milik Kru yang dialokasikan ke proyek. Barang ini sementara, bukan aset tetap studio.' : 'Inventaris unit studio. Status pemakaian dihitung otomatis dari alokasi, serah terima, dan kondisi unit.', $aksi_kepala);
 ?>
+<?php if ($tab !== 'eksternal'): ?>
 <div class="grid-kpi">
 <div class="kartu kpi"><p class="kpi-label">Total unit</p><p class="kpi-angka"><?= count(db('perlengkapan')) ?></p><p class="kpi-ket"><?= count(db('kategori')) ?> kategori</p></div>
 <div class="kartu kpi"><p class="kpi-label">Tersedia</p><p class="kpi-angka teks-hijau"><?= $ringkas['Tersedia'] ?></p><p class="kpi-ket">Siap dialokasikan</p></div>
 <div class="kartu kpi"><p class="kpi-label">Dipinjam</p><p class="kpi-angka teks-biru"><?= $ringkas['Dipinjam'] ?></p><p class="kpi-ket">Sedang di luar studio</p></div>
 <div class="kartu kpi"><p class="kpi-label">Tidak tersedia</p><p class="kpi-angka teks-merah"><?= $ringkas['Tidak Tersedia'] ?></p><p class="kpi-ket">Maintenance, rusak, atau nonaktif</p></div>
 </div>
+<?php endif; ?>
 
-<?= tab_bar(['unit' => 'Unit inventaris', 'insiden' => 'Insiden <span class="chip-angka">' . count($terbuka) . '</span>'], $tab, 'pages/perlengkapan.php') ?>
+<?= tab_bar(['unit' => 'Unit inventaris', 'eksternal' => 'Barang eksternal <span class="chip-angka">' . $ringkas_eks['alokasi_aktif'] . '</span>', 'insiden' => 'Insiden <span class="chip-angka">' . count($terbuka) . '</span>'], $tab, 'pages/perlengkapan.php') ?>
+
+<?php if ($tab === 'eksternal'): ?>
+<?php
+$f_sumber = in_array(query('sumber'), ['Rental', 'Milik Kru'], true) ? query('sumber') : '';
+$f_status_eks = in_array(query('status'), ['Direncanakan', 'Dikonfirmasi', 'Dibatalkan'], true) ? query('status') : '';
+$kata_eks = query('q');
+$eks_tampil = array_values(array_filter($eksternal, function ($b) use ($f_sumber, $f_status_eks, $kata_eks) {
+    $a = $b['alokasi'];
+    return ($f_sumber === '' || $a['sumber'] === $f_sumber)
+        && ($f_status_eks === '' || $a['status'] === $f_status_eks)
+        && cocok($kata_eks, $a['nama_barang'], $b['kebutuhan']['nama'] ?? '', $b['proyek']['kode'] ?? '', $b['proyek']['nama'] ?? '', $b['asal'], $a['kontak_vendor'] ?? '');
+}));
+?>
+<div class="grid-kpi">
+<div class="kartu kpi"><p class="kpi-label">Alokasi eksternal aktif</p><p class="kpi-angka"><?= $ringkas_eks['alokasi_aktif'] ?></p><p class="kpi-ket">baris alokasi, tanpa yang Dibatalkan</p></div>
+<div class="kartu kpi"><p class="kpi-label">Unit Rental</p><p class="kpi-angka"><?= $ringkas_eks['unit_rental'] ?></p><p class="kpi-ket">kuantitas barang dari vendor</p></div>
+<div class="kartu kpi"><p class="kpi-label">Unit Milik Kru</p><p class="kpi-angka"><?= $ringkas_eks['unit_kru'] ?></p><p class="kpi-ket">kuantitas barang dibawa anggota tim</p></div>
+<div class="kartu kpi"><p class="kpi-label">Masih direncanakan</p><p class="kpi-angka<?= $ringkas_eks['direncanakan'] ? ' teks-kuning' : '' ?>"><?= $ringkas_eks['direncanakan'] ?></p><p class="kpi-ket">baris alokasi · <?= $ringkas_eks['unit_direncanakan'] ?> unit belum dikonfirmasi</p></div>
+</div>
+
+<form method="get" class="kartu saring" role="search">
+<input type="hidden" name="tab" value="eksternal">
+<div class="bidang">
+<label for="saring-sumber">Sumber</label>
+<select id="saring-sumber" name="sumber" data-kirim-otomatis>
+<?= opsi(['Rental' => 'Rental', 'Milik Kru' => 'Milik Kru'], $f_sumber, 'Semua sumber') ?>
+</select>
+</div>
+<div class="bidang">
+<label for="saring-status-eks">Status alokasi</label>
+<select id="saring-status-eks" name="status" data-kirim-otomatis>
+<?= opsi(['Direncanakan' => 'Direncanakan', 'Dikonfirmasi' => 'Dikonfirmasi', 'Dibatalkan' => 'Dibatalkan'], $f_status_eks, 'Semua status') ?>
+</select>
+</div>
+<div class="bidang bidang-lebar">
+<label for="saring-cari-eks">Cari</label>
+<div class="cari cari-isi">
+<?= ikon('search', 16) ?>
+<input id="saring-cari-eks" type="search" name="q" value="<?= e($kata_eks) ?>" placeholder="Barang, proyek, vendor, atau pemilik">
+</div>
+</div>
+<?php if ($f_sumber !== '' || $f_status_eks !== '' || $kata_eks !== ''): ?>
+<a href="<?= e(url('pages/perlengkapan.php?tab=eksternal')) ?>" class="btn btn-sekunder btn-kecil saring-reset"><?= ikon('x', 16) ?><span>Reset</span></a>
+<?php endif; ?>
+</form>
+
+<section class="kartu">
+<div class="kartu-kepala">
+<div>
+<h2>Barang eksternal</h2>
+<p data-jumlah-eksternal><?= count($eks_tampil) ?> dari <?= count($eksternal) ?> alokasi ditampilkan. Dikonfirmasi berarti alokasi disepakati, belum berarti barang sudah diterima. Penerimaan, jatuh tempo, dan pengembalian Rental dicatat di kolom Sewa vendor.</p>
+</div>
+</div>
+<?php
+$sewa_hitung = ['Terlambat' => 0, 'Mendekati Jatuh Tempo' => 0, 'Tempo Vendor Lewat' => 0];
+foreach ($eksternal as $bx) {
+    if ($bx['alokasi']['sumber'] === 'Rental') {
+        $sx = info_rental($bx['alokasi'])['status_sewa'];
+        if (isset($sewa_hitung[$sx])) {
+            $sewa_hitung[$sx]++;
+        }
+    }
+}
+$sewa_pesan = array_filter([
+    $sewa_hitung['Terlambat'] ? $sewa_hitung['Terlambat'] . ' rental terlambat dikembalikan ke vendor' : '',
+    $sewa_hitung['Mendekati Jatuh Tempo'] ? $sewa_hitung['Mendekati Jatuh Tempo'] . ' rental mendekati jatuh tempo (H-2)' : '',
+    $sewa_hitung['Tempo Vendor Lewat'] ? $sewa_hitung['Tempo Vendor Lewat'] . ' rental lewat tempo vendor tetapi penerimaannya belum dicatat' : '',
+]);
+?>
+<?php if ($sewa_pesan): ?>
+<div class="pemberitahuan <?= $sewa_hitung['Terlambat'] ? 'pemberitahuan-error' : 'pemberitahuan-info' ?> pemberitahuan-kartu" role="status" data-peringatan-sewa><?= ikon('triangle-alert') ?><span><?= e(implode(' · ', $sewa_pesan)) ?>. Periksa penerimaan, perpanjang, atau kembalikan ke vendor.</span></div>
+<?php endif; ?>
+<?php if (!$eksternal): ?>
+<?= kosong('Belum ada barang eksternal', 'Barang Rental dan Milik Kru muncul otomatis setelah dialokasikan di proyek.') ?>
+<?php elseif (!$eks_tampil): ?>
+<?= kosong('Tidak ada barang eksternal yang cocok', 'Ubah saringan atau kata kunci pencarian.') ?>
+<?php else: ?>
+<div class="tabel-wrap">
+<table class="tabel tabel-kartu tabel-eksternal">
+<thead><tr><th>Barang</th><th class="angka">Jumlah</th><th>Proyek &amp; periode</th><th>Sumber</th><th>Status</th><th>Sewa vendor</th><th><span class="sr">Aksi</span></th></tr></thead>
+<tbody>
+<?php foreach ($eks_tampil as $b): ?>
+<?php $a = $b['alokasi']; $pr = $b['proyek']; ?>
+<tr>
+<td data-label="Barang"><strong class="teks-pecah"><?= e($a['nama_barang'] !== '' ? $a['nama_barang'] : 'Belum dicatat') ?></strong><div class="kecil redup">Untuk <?= e($b['kebutuhan']['nama'] ?? 'kebutuhan dihapus') ?></div><?= $a['catatan'] !== '' ? '<div class="kecil redup teks-pecah" data-catatan>Catatan (teks bebas): ' . e($a['catatan']) . '</div>' : '' ?></td>
+<td data-label="Jumlah" class="angka"><?= (int) $b['jumlah'] ?> unit</td>
+<td data-label="Proyek &amp; periode"><strong><?= e($pr['kode'] ?? '?') ?></strong><div class="kecil redup"><?= e($pr['nama'] ?? 'Proyek tidak ditemukan') ?><?= $pr ? ' · ' . e($pr['status']) : '' ?></div><div class="kecil">Pakai <?= e(rentang_tgl($a['tgl_mulai'], $a['tgl_selesai'])) ?></div></td>
+<td data-label="Sumber"><span class="sumber sumber-<?= e(strtolower(str_replace(' ', '-', $a['sumber']))) ?>"><?= ikon($a['sumber'] === 'Rental' ? 'truck' : 'user', 14) ?><?= e($a['sumber']) ?></span><div class="kecil redup teks-pecah"><?= $a['sumber'] === 'Rental' ? 'Vendor' : 'Pemilik' ?>: <?= e($b['asal'] !== '' ? $b['asal'] : 'Belum dicatat') ?></div><?= $a['sumber'] === 'Rental' && ($a['kontak_vendor'] ?? '') !== '' ? '<div class="kecil redup teks-pecah">Kontak: ' . e($a['kontak_vendor']) . '</div>' : '' ?></td>
+<td data-label="Status"><?= badge($a['status']) ?><?= label_status_alokasi($a) !== $a['status'] ? '<div class="kecil redup">' . e(label_status_alokasi($a)) . '</div>' : '' ?>
+<div class="kecil" data-pemeriksaan>
+<?php if ($a['status'] === 'Dibatalkan'): ?>
+<span class="redup">—</span>
+<?php elseif ($a['status'] !== 'Dikonfirmasi'): ?>
+<span class="redup">Menunggu konfirmasi</span>
+<?php elseif (!alokasi_bisa_diperiksa($a)): ?>
+<span class="redup">Menunggu penerimaan vendor<?= $b['centang_tersimpan'] ? ' · centang lama belum berlaku' : '' ?></span>
+<?php elseif ($b['diperiksa_aktif']): ?>
+<?= badge('Diperiksa Petugas') ?>
+<?php elseif ($b['diperiksa']): ?>
+<span class="redup">Pernah diperiksa (<?= $b['proyek_aktif'] ? 'sudah dikembalikan ke vendor' : 'proyek ditutup' ?>)</span>
+<?php else: ?>
+<span class="redup">Belum diperiksa</span>
+<?php endif; ?>
+</div>
+</td>
+<td data-label="Sewa vendor" data-sewa>
+<?php if ($a['sumber'] !== 'Rental'): ?>
+<span class="kecil redup">Tidak berlaku (barang milik kru)</span>
+<?php elseif ($a['status'] === 'Dibatalkan'): ?>
+<span class="kecil redup">—</span>
+<?php else: ?>
+<?php $r = info_rental($a); $kirim = ['id' => $a['id'], 'proyek_id' => $a['proyek_id'], '_barang' => $a['nama_barang'] . ' · ' . $b['jumlah'] . ' unit · ' . ($pr['kode'] ?? '?'), '_vendor' => $a['vendor'], 'jumlah' => $b['jumlah'], '_jumlah' => $b['jumlah'] . ' unit']; ?>
+<?= badge($r['status_sewa']) ?>
+<div class="kecil">Jatuh tempo: <?= $r['jatuh_tempo'] ? e(tgl($r['jatuh_tempo'])) : 'Belum dicatat' ?><?= $r['jatuh_tempo'] && !$r['dikembalikan'] ? ' · ' . e($r['keterangan']) : '' ?></div>
+<div class="kecil redup">Penerimaan: <?= $r['diterima'] ? 'diterima ' . e(tgl($a['diterima_pada'], 'singkat_jam')) . ' · ' . e($a['kondisi_terima'] ?? '') : 'belum diterima' ?></div>
+<div class="kecil redup">Ke vendor: <?= $r['dikembalikan'] ? 'dikembalikan ' . e(tgl($a['dikembalikan_vendor_pada'], 'singkat_jam')) . ' · ' . e($a['kondisi_kembali_vendor'] ?? '') : 'belum dikembalikan' ?></div>
+<?php if (boleh('rental.kelola') && ($r['bisa_terima'] || $r['bisa_tempo'] || $r['bisa_kembali'])): ?>
+<div class="aksi-rental">
+<?php if ($r['bisa_terima']): ?>
+<?= tombol_modal('dialog-terima-rental', 'Catat penerimaan', $kirim + ['waktu' => waktu_input(sekarang()), 'kondisi' => 'Baik'], 'package', 'btn btn-kecil') ?>
+<?php endif; ?>
+<?php if ($r['bisa_kembali']): ?>
+<?= tombol_modal('dialog-kembali-vendor', 'Kembalikan ke vendor', $kirim + ['waktu' => waktu_input(sekarang()), 'kondisi' => 'Baik'], 'truck', 'btn btn-kecil') ?>
+<?php endif; ?>
+<?php if ($r['bisa_tempo'] && $r['jatuh_tempo']): ?>
+<?= tombol_modal('dialog-perpanjang-rental', 'Perpanjang', $kirim + ['_tempo_lama' => tgl($r['jatuh_tempo'], 'panjang'), 'jatuh_tempo' => date('Y-m-d', strtotime($r['jatuh_tempo'] . ' +1 day'))], 'calendar-days', 'btn btn-sekunder btn-kecil') ?>
+<?php elseif ($r['bisa_tempo']): ?>
+<?= tombol_modal('dialog-atur-tempo', 'Atur jatuh tempo', $kirim + ['sewa_mulai' => $a['tgl_mulai'], 'kontak_vendor' => $a['kontak_vendor'] ?? ''], 'calendar-days', 'btn btn-sekunder btn-kecil') ?>
+<?php endif; ?>
+</div>
+<?php endif; ?>
+<?php endif; ?>
+</td>
+<td class="kolom-aksi"><?php if ($pr): ?><a href="<?= e(url('pages/proyek-detail.php?id=' . (int) $pr['id'] . '&tab=kebutuhan')) ?>" class="tombol-ikon tombol-ikon-kecil" aria-label="Lihat proyek <?= e($pr['kode']) ?>" title="Lihat proyek <?= e($pr['kode']) ?>"><?= ikon('chevron-right', 16) ?></a><?php endif; ?></td>
+</tr>
+<?php endforeach; ?>
+</tbody>
+</table>
+</div>
+<?php endif; ?>
+</section>
+<?php endif; ?>
 
 <?php if ($tab === 'unit'): ?>
 <?php
@@ -269,6 +443,9 @@ if ($kelola) {
 }
 if (boleh('insiden.kelola')) {
     require ROOT . '/partials/modal_insiden.php';
+}
+if (boleh('rental.kelola') && $tab === 'eksternal') {
+    require ROOT . '/partials/modal_rental.php';
 }
 ?>
 <?php require ROOT . '/includes/layout_foot.php'; ?>

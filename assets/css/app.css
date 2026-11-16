@@ -400,6 +400,7 @@ textarea {
 }
 
 .tabel-wrap {
+  position: relative;
   overflow-x: auto;
 }
 
@@ -1351,6 +1352,27 @@ h3 {
 
 .info-grid dd {
   margin: 4px 0 0;
+}
+
+.aksi-rental {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.pemberitahuan-kartu {
+  margin: 0 20px 16px;
+}
+
+.teks-pecah {
+  overflow-wrap: anywhere;
+}
+
+@media (min-width: 721px) {
+  .tabel-eksternal td[data-label="Barang"] {
+    min-width: 120px;
+  }
 }
 
 .aksi-baris {
