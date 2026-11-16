@@ -399,7 +399,7 @@ $berikut = jadwal_berikutnya($u['id']);
 <?= badge($status) ?>
 <?php if ($keluar): ?>
 <?php $pk = db_cari('proyek', $keluar['proyek_id']); ?>
-<div class="kecil <?= status_keluar($keluar) === 'Terlambat' ? 'teks-merah' : 'redup' ?>">Di <?= e($pk['kode'] ?? '?') ?> · tempo <?= e(tgl($keluar['tgl_selesai'], 'singkat')) ?><?= status_keluar($keluar) === 'Terlambat' ? ' · terlambat ' . hari_terlambat($keluar) . ' hari' : '' ?></div>
+<div class="kecil redup" data-unit-di-proyek>Masih di <?= e($pk['kode'] ?? '?') ?> · jadwal selesai <?= e(tgl($keluar['tgl_selesai'], 'singkat')) ?></div>
 <?php elseif ($berikut): ?>
 <?php $pb = db_cari('proyek', $berikut['proyek_id']); ?>
 <div class="kecil redup">Berikutnya <?= e($pb['kode'] ?? '?') ?> · <?= e(rentang_tgl($berikut['tgl_mulai'], $berikut['tgl_selesai'])) ?></div>

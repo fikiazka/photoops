@@ -10,21 +10,8 @@ function kode_transaksi_baru(): string
     return 'TRX-' . str_pad((string) ($maks + 1), 3, '0', STR_PAD_LEFT);
 }
 
-function status_keluar(array $alokasi): string
-{
-    if (HARI_INI > $alokasi['tgl_selesai']) {
-        return 'Terlambat';
-    }
-    if (HARI_INI === $alokasi['tgl_selesai']) {
-        return 'Hari ini';
-    }
-    return 'Dipinjam';
-}
-
-function hari_terlambat(array $alokasi): int
-{
-    return max(0, (int) ((strtotime(HARI_INI) - strtotime($alokasi['tgl_selesai'])) / 86400));
-}
+// Sprint 3E final: tidak ada lagi status "Terlambat/Hari ini" untuk barang proyek. Tanggal selesai event (tgl_selesai)
+// hanya informasi jadwal, bukan batas wajib pengembalian. Status barang = saldo transaksi (keluar - akumulasi kembali).
 
 function jumlah_detail(array $detail): int
 {
@@ -152,7 +139,7 @@ function unit_belum_kembali(?int $proyek_id = null): array
         if ($proyek_id !== null && (int) $alokasi['proyek_id'] !== $proyek_id) {
             continue;
         }
-        $hasil[] = ['alokasi' => $alokasi, 'unit' => db_cari('perlengkapan', (int) $alokasi['perlengkapan_id']), 'status' => status_keluar($alokasi), 'keluar' => serah_alokasi($alokasi['id'])['keluar']];
+        $hasil[] = ['alokasi' => $alokasi, 'unit' => db_cari('perlengkapan', (int) $alokasi['perlengkapan_id']), 'keluar' => serah_alokasi($alokasi['id'])['keluar']];
     }
     usort($hasil, fn ($a, $b) => strcmp($a['alokasi']['tgl_selesai'], $b['alokasi']['tgl_selesai']));
     return $hasil;
@@ -180,7 +167,6 @@ function barang_di_luar(?int $proyek_id = null): array
             'kondisi_rincian' => $serah['kondisi_rincian'] ?? [],
             'kembali_terakhir' => $serah['kembali_terakhir'] ?? null,
             'trx_keluar' => $transaksi[$serah['trx_keluar']] ?? null,
-            'status' => status_keluar($alokasi),
             'keluar' => $serah['keluar'],
         ];
     }
@@ -191,8 +177,9 @@ function barang_di_luar(?int $proyek_id = null): array
 function ringkasan_barang_proyek(?int $proyek_id = null): array
 {
     // Sprint 3D: KPI "barang di proyek" semua sumber, dari saldo transaksi (keluar - kembali), bukan banyaknya baris.
+    // Sprint 3E final: tiga denominasi dipisah — 'unit' = kuantitas semua sumber, 'unit_studio' = unit fisik Studio
+    // (alokasi Studio selalu 1 unit dan satu unit hanya bisa keluar di satu proyek), 'alokasi' = baris alokasi yang saldonya > 0.
     $luar = barang_di_luar($proyek_id);
-    $telat = array_values(array_filter($luar, fn ($b) => $b['status'] === 'Terlambat'));
     $pernah_keluar = false;
     if ($proyek_id !== null) {
         foreach (alokasi_proyek($proyek_id, true) as $a) {
@@ -207,10 +194,8 @@ function ringkasan_barang_proyek(?int $proyek_id = null): array
         'daftar' => $luar,
         'unit' => array_sum($per_sumber),
         'per_sumber' => $per_sumber,
+        'unit_studio' => $per_sumber['Studio'],
         'alokasi' => count($luar),
-        'terlambat' => count($telat),
-        'terlambat_unit' => array_sum(array_column($telat, 'jumlah')),
-        'hari_ini' => count(array_filter($luar, fn ($b) => $b['status'] === 'Hari ini')),
         'pernah_keluar' => $pernah_keluar,
     ];
 }
@@ -315,15 +300,11 @@ function proses_pengembalian(array $proyek, array $item, ?array $penyerah, strin
     ]);
     $per_sumber = ['Studio' => 0, 'Rental' => 0, 'Milik Kru' => 0];
     $per_kondisi = ['Baik' => 0, 'Maintenance' => 0, 'Rusak' => 0];
-    $terlambat = 0;
     $bermasalah = [];
     $eksternal_bermasalah = [];
     $insiden = [];
     foreach ($item as $baris) {
         $alokasi = $baris['alokasi'];
-        if (substr($waktu, 0, 10) > $alokasi['tgl_selesai']) {
-            $terlambat++;
-        }
         foreach ($baris['per_kondisi'] as $kondisi => $jumlah) {
             if ($jumlah < 1) {
                 continue;
@@ -358,13 +339,17 @@ function proses_pengembalian(array $proyek, array $item, ?array $penyerah, strin
         }
     }
     $total = array_sum($per_sumber);
+    // Sprint 3E final: tidak ada penilaian terlambat/tepat waktu berdasarkan jadwal event (jadwal bersifat dinamis).
+    // Yang dicatat hanya fakta: waktu pengembalian dan saldo yang masih di proyek setelah transaksi ini.
+    $sisa_proyek = array_sum(array_column(barang_di_luar((int) $proyek['id']), 'jumlah'));
     $ket = $total . ' unit kembali (' . teks_per_sumber($per_sumber) . ') · kondisi ' . teks_kondisi($per_kondisi);
-    $ket .= $terlambat ? ' · ' . $terlambat . ' alokasi terlambat' : ' · tepat waktu';
+    $ket .= ' · waktu kembali ' . tgl($waktu, 'lengkap');
+    $ket .= $sisa_proyek > 0 ? ' · sisa di proyek ' . $sisa_proyek . ' unit' : ' · seluruh barang proyek sudah kembali';
     $ket .= $penyerah ? ' · diserahkan ' . $penyerah['nama'] : '';
     $ket .= $insiden ? ' · insiden ' . implode(', ', $insiden) : '';
     $ket .= $eksternal_bermasalah ? ' · eksternal bermasalah: ' . implode(', ', $eksternal_bermasalah) : '';
     catat_riwayat('Pengembalian', $proyek['kode'] . ' · ' . $kode, $ket);
-    return ['kode' => $kode, 'total' => $total, 'per_sumber' => $per_sumber, 'per_kondisi' => $per_kondisi, 'terlambat' => $terlambat, 'bermasalah' => $bermasalah, 'eksternal_bermasalah' => $eksternal_bermasalah, 'insiden' => $insiden];
+    return ['kode' => $kode, 'total' => $total, 'per_sumber' => $per_sumber, 'per_kondisi' => $per_kondisi, 'sisa_proyek' => $sisa_proyek, 'bermasalah' => $bermasalah, 'eksternal_bermasalah' => $eksternal_bermasalah, 'insiden' => $insiden];
 }
 
 function daftar_transaksi(?int $proyek_id = null): array
@@ -384,18 +369,6 @@ function daftar_transaksi(?int $proyek_id = null): array
     }
     usort($hasil, fn ($a, $b) => strcmp($b['waktu'], $a['waktu']));
     return $hasil;
-}
-
-function pengembalian_terlambat_historis(): int
-{
-    $jumlah = 0;
-    foreach (db('alokasi') as $alokasi) {
-        $kembali = serah_alokasi($alokasi['id'])['kembali'] ?? null;
-        if ($kembali && substr($kembali, 0, 10) > $alokasi['tgl_selesai']) {
-            $jumlah++;
-        }
-    }
-    return $jumlah;
 }
 
 function tren_mingguan(int $minggu = 6): array

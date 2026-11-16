@@ -9,9 +9,13 @@ $f_aksi = query('aksi');
 $f_oleh = query('oleh');
 $kata = query('q');
 
+// Sprint 3E: keterangan ketepatan waktu untuk baris Persiapan (dibaca dari log, tidak mengubah apa pun).
+$info_persiapan = info_persiapan_riwayat();
+$nama_proyek = fn ($r) => isset($info_persiapan[(int) $r['id']]['proyek']) ? $info_persiapan[(int) $r['id']]['proyek']['nama'] : '';
+
 $tampil = array_values(array_filter($semua, fn ($r) => ($f_aksi === '' || $r['aksi'] === $f_aksi)
     && ($f_oleh === '' || (string) $r['pengguna_id'] === $f_oleh)
-    && cocok($kata, $r['objek'], $r['keterangan'], $r['aksi'])));
+    && cocok($kata, $r['objek'], $r['keterangan'], $r['aksi'], $nama_proyek($r))));
 
 $pelaku = [];
 foreach ($semua as $r) {
@@ -67,14 +71,46 @@ judul_halaman('Riwayat Aktivitas', 'Jejak semua perubahan: proyek, alokasi, pers
 <h3 class="pemisah-hari"><?= e(tgl($hari, 'panjang')) ?></h3>
 <ul class="linimasa">
 <?php foreach ($baris_hari as $r): ?>
+<?php $ip = $info_persiapan[(int) $r['id']] ?? null; ?>
+<?php if ($ip): ?>
+<?php $objek = $ip['proyek'] ? $ip['proyek']['kode'] . ' · ' . $ip['proyek']['nama'] : $r['objek']; ?>
+<li class="linimasa-item riwayat-persiapan" data-persiapan="<?= e($ip['jenis']) ?>">
+<span class="ikon-bulat ikon-abu"><?= ikon(ikon_aksi($r['aksi']), 16) ?></span>
+<div class="daftar-utama">
+<?php if ($ip['jenis'] === 'konfirmasi'): ?>
+<p class="daftar-judul">Persiapan Dikonfirmasi Selesai · <?= e($objek) ?><?php if ($ip['status'] !== ''): ?> <?= badge($ip['status'] === 'Terlambat' ? 'Persiapan Terlambat' : 'Tepat Waktu', $ip['status']) ?><?php endif; ?></p>
+<?php if ($ip['proyek']): ?>
+<p class="daftar-sub">Deadline <?= e(tgl($ip['deadline'], 'lengkap')) ?> · dikonfirmasi <?= e(tgl($r['waktu'], 'lengkap')) ?><?= $ip['status'] === 'Terlambat' ? ' · terlambat ' . e($ip['selisih']) : '' ?></p>
+<?php else: ?>
+<p class="daftar-sub">Dikonfirmasi <?= e(tgl($r['waktu'], 'lengkap')) ?></p>
+<p class="riwayat-catatan">Proyek sudah dihapus, deadline tidak tersedia; ketepatan waktu tidak dihitung.</p>
+<?php endif; ?>
+<?php if ($ip['dibatalkan']): ?>
+<p class="riwayat-catatan" data-tidak-berlaku>Kemudian <?= $ip['dibatalkan']['otomatis'] ? 'tidak berlaku lagi' : 'dibuka ulang' ?> pada <?= e(tgl($ip['dibatalkan']['waktu'], 'lengkap')) ?>; konfirmasi ini bukan status saat ini.</p>
+<?php endif; ?>
+<?php if ($ip['deadline_berubah']): ?>
+<p class="riwayat-catatan">Deadline diubah setelah konfirmasi (sekarang <?= e(tgl((string) $ip['proyek']['deadline_persiapan'], 'lengkap')) ?>); penilaian memakai deadline saat konfirmasi.</p>
+<?php endif; ?>
+<?php elseif ($ip['jenis'] === 'batal'): ?>
+<p class="daftar-judul"><?= $ip['otomatis'] ? 'Konfirmasi Persiapan Tidak Berlaku' : 'Persiapan Dibuka Ulang' ?> · <?= e($objek) ?></p>
+<p class="daftar-sub"><?= e($ip['alasan']) ?> · <span class="perubahan"><?= e($r['lama']) ?> → <?= e($r['baru']) ?></span></p>
+<?php else: ?>
+<p class="daftar-judul">Persiapan · <?= e($objek) ?></p>
+<p class="daftar-sub">Progres checklist: <?= (int) $ip['diperiksa'] ?> dari <?= (int) $ip['total'] ?> barang diperiksa · belum dikonfirmasi selesai</p>
+<?php endif; ?>
+</div>
+<div class="linimasa-waktu kecil redup"><span class="riwayat-jam"><?= e(tgl($r['waktu'], 'jam')) ?></span><br><?= e(nama_pengguna($r['pengguna_id'])) ?></div>
+</li>
+<?php else: ?>
 <li class="linimasa-item">
 <span class="ikon-bulat ikon-abu"><?= ikon(ikon_aksi($r['aksi']), 16) ?></span>
 <div class="daftar-utama">
 <p class="daftar-judul"><?= e($r['aksi']) ?> · <?= e($r['objek']) ?></p>
 <p class="daftar-sub"><?= e($r['keterangan']) ?><?php if ($r['lama'] !== '' || $r['baru'] !== ''): ?> · <span class="perubahan"><?= e($r['lama'] !== '' ? $r['lama'] : '—') ?> → <?= e($r['baru'] !== '' ? $r['baru'] : '—') ?></span><?php endif; ?></p>
 </div>
-<div class="linimasa-waktu kecil redup"><?= e(tgl($r['waktu'], 'jam')) ?><br><?= e(nama_pengguna($r['pengguna_id'])) ?></div>
+<div class="linimasa-waktu kecil redup"><span class="riwayat-jam"><?= e(tgl($r['waktu'], 'jam')) ?></span><br><?= e(nama_pengguna($r['pengguna_id'])) ?></div>
 </li>
+<?php endif; ?>
 <?php endforeach; ?>
 </ul>
 <?php endforeach; ?>

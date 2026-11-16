@@ -469,7 +469,7 @@ require ROOT . '/includes/layout_head.php';
 <div class="kartu kpi">
 <p class="kpi-label">Barang di proyek</p>
 <p class="kpi-angka" data-kpi-di-proyek><?= $di_proyek_p['unit'] ?></p>
-<p class="kpi-ket"><?= $di_proyek_p['unit'] ? e(teks_per_sumber($di_proyek_p['per_sumber'])) . ' unit · ' : ($di_proyek_p['pernah_keluar'] ? 'semua sudah kembali · ' : 'belum ada yang keluar · ') ?><?= $di_proyek_p['terlambat'] ?> terlambat kembali</p>
+<p class="kpi-ket"><?= $di_proyek_p['unit'] ? e(teks_per_sumber($di_proyek_p['per_sumber'])) . ' unit · ' . $di_proyek_p['alokasi'] . ' alokasi belum kembali' : ($di_proyek_p['pernah_keluar'] ? 'semua sudah kembali' : 'belum ada yang keluar') ?></p>
 </div>
 </div>
 <div class="grid-2">
@@ -586,7 +586,7 @@ require ROOT . '/includes/layout_head.php';
 <?php elseif (($serah['status_kembali'] ?? '') === 'Kembali Sebagian'): ?>
 <?= badge('Kembali Sebagian', 'Kembali sebagian · ' . (int) $serah['jumlah_kembali'] . '/' . (int) $serah['jumlah_keluar']) ?>
 <?php elseif (isset($serah['keluar'])): ?>
-<?= badge(status_keluar($a), 'Keluar · ' . status_keluar($a)) ?>
+<?= badge('Sedang Keluar', 'Masih di proyek') ?>
 <?php endif; ?>
 </div>
 <?php if (boleh('alokasi.kelola') && $ubah_kebutuhan && !$batal && !$serah && !rental_punya_catatan_vendor($a)): ?>
@@ -771,7 +771,7 @@ foreach ($barang_p as $bp) {
 <?php else: ?>
 <div class="tabel-wrap">
 <table class="tabel tabel-kartu">
-<thead><tr><th>Barang</th><th class="angka">Jumlah</th><th>Keluar</th><th>Jatuh tempo</th><th>Kembali dari proyek</th><th>Status</th></tr></thead>
+<thead><tr><th>Barang</th><th class="angka">Jumlah</th><th>Keluar</th><th>Jadwal selesai</th><th>Kembali dari proyek</th><th>Status</th></tr></thead>
 <tbody>
 <?php foreach ($barang_p as $a): ?>
 <?php $serah = serah_alokasi($a['id']); ?>
@@ -779,15 +779,15 @@ foreach ($barang_p as $bp) {
 <td data-label="Barang"><strong class="teks-pecah"><?= e($a['sumber'] === 'Studio' ? keterangan_sumber($a) : nama_barang_alokasi($a)) ?></strong><div class="kecil redup teks-pecah"><span class="sumber sumber-<?= e(strtolower(str_replace(' ', '-', $a['sumber']))) ?>"><?= e($a['sumber']) ?></span> <?= e($a['sumber'] === 'Studio' ? nama_barang_alokasi($a) : keterangan_sumber($a)) ?></div></td>
 <td data-label="Jumlah" class="angka"><?= (int) ($serah['jumlah_keluar'] ?? jumlah_alokasi($a)) ?> unit</td>
 <td data-label="Keluar"><?php if (isset($serah['keluar'])): ?><?php $trx_s = db_cari('transaksi', $serah['trx_keluar'] ?? 0); ?><?= e(tgl($serah['keluar'], 'singkat_jam')) ?><div class="kecil redup"><?= e(($trx_s['kode'] ?? '?') . (!empty($trx_s['penerima']) ? ' · ' . $trx_s['penerima'] : '')) ?></div><?php else: ?><span class="redup">—</span><?php endif; ?></td>
-<td data-label="Jatuh tempo"><?= e(tgl($a['tgl_selesai'])) ?></td>
+<td data-label="Jadwal selesai"><?= e(tgl($a['tgl_selesai'])) ?></td>
 <td data-label="Kembali dari proyek"><?php if (!empty($serah['jumlah_kembali'])): ?><?= (int) $serah['jumlah_kembali'] ?> dari <?= (int) $serah['jumlah_keluar'] ?> unit · sisa <?= (int) $serah['sisa'] ?><div class="kecil redup"><?= e(teks_kondisi($serah['kondisi_rincian'] ?? []) . ' · terakhir ' . tgl($serah['kembali_terakhir'], 'singkat_jam')) ?></div><?php elseif (isset($serah['keluar'])): ?>0 dari <?= (int) $serah['jumlah_keluar'] ?> unit · sisa <?= (int) $serah['sisa'] ?><?php else: ?><span class="redup">—</span><?php endif; ?></td>
 <td data-label="Status">
 <?php if (isset($serah['kembali'])): ?>
-<?= badge(substr($serah['kembali'], 0, 10) > $a['tgl_selesai'] ? 'Terlambat' : 'Sudah Kembali', substr($serah['kembali'], 0, 10) > $a['tgl_selesai'] ? 'Sudah kembali · terlambat' : 'Sudah Kembali') ?>
+<?= badge('Sudah Kembali') ?>
 <?php elseif (($serah['status_kembali'] ?? '') === 'Kembali Sebagian'): ?>
-<?= badge('Kembali Sebagian') ?> <?= badge(status_keluar($a), 'Tempo · ' . status_keluar($a)) ?>
+<?= badge('Kembali Sebagian') ?>
 <?php elseif (isset($serah['keluar'])): ?>
-<?= badge(status_keluar($a), 'Belum kembali · ' . status_keluar($a)) ?>
+<?= badge('Sedang Keluar', 'Masih di proyek') ?>
 <?php else: ?>
 <?= badge($a['status'] === 'Dikonfirmasi' ? 'Menunggu' : $a['status'], $a['status'] === 'Dikonfirmasi' ? 'Belum keluar' : $a['status']) ?>
 <?php endif; ?>

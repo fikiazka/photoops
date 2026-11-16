@@ -281,7 +281,7 @@ if (is_post()) {
         }
         $hasil = proses_pengembalian($proyek, $item, $penyerah, $waktu, $catatan);
         $pesan = $hasil['kode'] . ': ' . $hasil['total'] . ' unit kembali dari ' . $proyek['kode'] . ' (' . teks_per_sumber($hasil['per_sumber']) . '; kondisi ' . teks_kondisi($hasil['per_kondisi']) . ')';
-        $pesan .= $hasil['terlambat'] ? ', ' . $hasil['terlambat'] . ' alokasi terlambat' : '';
+        $pesan .= $hasil['sisa_proyek'] > 0 ? ', sisa di proyek ' . $hasil['sisa_proyek'] . ' unit' : ', seluruh barang proyek sudah kembali';
         $pesan .= $hasil['bermasalah'] ? '. Insiden dicatat untuk ' . implode(', ', $hasil['bermasalah']) . ' (' . implode(', ', $hasil['insiden']) . ')' : '';
         $pesan .= $hasil['eksternal_bermasalah'] ? '. Kondisi barang eksternal dicatat di transaksi ini: ' . implode(', ', $hasil['eksternal_bermasalah']) . '; inventaris studio tidak berubah' : '';
         $pesan .= $hasil['per_sumber']['Rental'] ? '. Rental belum dikembalikan ke vendor' : '';
@@ -309,8 +309,8 @@ judul_halaman('Serah Terima Barang', 'Catat barang Studio, Rental, dan Milik Kru
 <div class="grid-kpi">
 <div class="kartu kpi"><p class="kpi-label">Siap keluar</p><p class="kpi-angka"><?= $jumlah_siap ?></p><p class="kpi-ket">unit dari <?= $proyek_bisa ?> proyek terkonfirmasi</p></div>
 <div class="kartu kpi"><p class="kpi-label">Sedang di luar</p><p class="kpi-angka teks-biru"><?= array_sum($luar_sumber) ?></p><p class="kpi-ket"><?= array_sum($luar_sumber) ? e(teks_per_sumber($luar_sumber)) . ' unit masih di proyek' : 'unit belum kembali' ?></p></div>
-<div class="kartu kpi"><p class="kpi-label">Jatuh tempo hari ini</p><p class="kpi-angka"><?= count(array_filter($di_luar_semua, fn ($b) => $b['status'] === 'Hari ini')) ?></p><p class="kpi-ket"><?= e(tgl(HARI_INI, 'panjang')) ?></p></div>
-<div class="kartu kpi"><p class="kpi-label">Terlambat</p><p class="kpi-angka teks-merah"><?= count(array_filter($di_luar_semua, fn ($b) => $b['status'] === 'Terlambat')) ?></p><p class="kpi-ket">alokasi lewat jatuh tempo</p></div>
+<div class="kartu kpi"><p class="kpi-label">Alokasi belum kembali</p><p class="kpi-angka" data-kpi-alokasi-di-proyek><?= count($di_luar_semua) ?></p><p class="kpi-ket">baris alokasi dengan sisa di <?= count($luar) ?> proyek</p></div>
+<div class="kartu kpi"><p class="kpi-label">Unit Studio di proyek</p><p class="kpi-angka" data-kpi-studio-di-proyek><?= $luar_sumber['Studio'] ?></p><p class="kpi-ket">unit fisik, tidak tersedia untuk proyek lain</p></div>
 </div>
 
 <div class="grid-2-rata">
@@ -353,22 +353,22 @@ $ps = hitung_per_sumber($kelompok_serah['unit'], true);
 
 <section class="kartu" id="pengembalian">
 <div class="kartu-kepala">
-<div><h2>Pengembalian</h2><p>Barang yang masih berada di proyek, diurutkan dari jatuh tempo paling dekat. Angka menunjukkan unit keluar, sudah kembali, dan sisa di proyek.</p></div>
+<div><h2>Pengembalian</h2><p>Barang yang masih berada di proyek, diurutkan dari jadwal selesai proyek paling awal. Angka menunjukkan unit keluar, sudah kembali, dan sisa di proyek. Jadwal selesai hanya informasi, bukan batas pengembalian.</p></div>
 </div>
 <?php if (!$luar): ?>
 <?= kosong('Tidak ada tanggungan barang', 'Semua barang yang tercatat keluar sudah kembali dari proyek.') ?>
 <?php else: ?>
 <ul class="daftar">
 <?php foreach ($luar as $id_luar => $kelompok_serah): ?>
-<?php $kp = $kelompok_serah['proyek']; $terlambat = count(array_filter($kelompok_serah['unit'], fn ($u) => $u['status'] === 'Terlambat')); ?>
+<?php $kp = $kelompok_serah['proyek']; ?>
 <li class="daftar-baris daftar-baris-atas" data-kembali-proyek="<?= (int) $kp['id'] ?>">
-<span class="ikon-bulat ikon-<?= $terlambat ? 'merah' : 'hijau' ?>"><?= ikon('arrow-down-left', 16) ?></span>
+<span class="ikon-bulat ikon-biru"><?= ikon('arrow-down-left', 16) ?></span>
 <div class="daftar-utama">
 <p class="daftar-judul"><a href="<?= e(url('pages/proyek-detail.php?id=' . $kp['id'] . '&tab=serah')) ?>"><?= e($kp['kode']) ?> · <?= e($kp['nama']) ?></a><?= proyek_aktif($kp) ? '' : ' <span class="redup">· ' . e($kp['status']) . '</span>' ?></p>
 <ul class="unit-mini">
 <?php foreach ($kelompok_serah['unit'] as $u): ?>
 <?php $ua = $u['alokasi']; ?>
-<li data-saldo-alokasi="<?= (int) $ua['id'] ?>"><span><?= e($ua['sumber'] === 'Studio' ? ($u['unit']['kode_unit'] ?? '?') : nama_barang_alokasi($ua) . ($u['jumlah'] > 1 ? ' × ' . $u['jumlah'] : '')) ?></span><?php if ($ua['sumber'] !== 'Studio'): ?> <span class="sumber sumber-<?= e(strtolower(str_replace(' ', '-', $ua['sumber']))) ?>"><?= e($ua['sumber']) ?></span> <span class="redup">keluar <?= (int) $u['jumlah_keluar'] ?> · kembali <?= (int) $u['jumlah_kembali'] ?> · sisa <?= (int) $u['jumlah'] ?></span><?php endif; ?> <?= $u['status_kembali'] === 'Kembali Sebagian' ? badge('Kembali Sebagian') : '' ?> <?= badge($u['status'], $u['status'] === 'Terlambat' ? 'Terlambat ' . hari_terlambat($ua) . ' hari' : ($u['status'] === 'Hari ini' ? 'Tempo hari ini' : 'Tempo ' . tgl($ua['tgl_selesai'], 'singkat'))) ?></li>
+<li data-saldo-alokasi="<?= (int) $ua['id'] ?>"><span><?= e($ua['sumber'] === 'Studio' ? ($u['unit']['kode_unit'] ?? '?') : nama_barang_alokasi($ua) . ($u['jumlah'] > 1 ? ' × ' . $u['jumlah'] : '')) ?></span><?php if ($ua['sumber'] !== 'Studio'): ?> <span class="sumber sumber-<?= e(strtolower(str_replace(' ', '-', $ua['sumber']))) ?>"><?= e($ua['sumber']) ?></span> <span class="redup">keluar <?= (int) $u['jumlah_keluar'] ?> · kembali <?= (int) $u['jumlah_kembali'] ?> · sisa <?= (int) $u['jumlah'] ?></span><?php endif; ?> <?= $u['status_kembali'] === 'Kembali Sebagian' ? badge('Kembali Sebagian') : '' ?> <span class="redup" data-jadwal-selesai>jadwal selesai <?= e(tgl($ua['tgl_selesai'], 'singkat')) ?></span></li>
 <?php endforeach; ?>
 </ul>
 </div>

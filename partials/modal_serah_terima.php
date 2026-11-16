@@ -41,7 +41,7 @@ if ($a['sumber'] === 'Studio') {
 <span class="ceklist-kotak" aria-hidden="true"><?= ikon('check', 14) ?></span>
 <span class="daftar-utama">
 <span class="daftar-judul"><?= e($judul_b) ?> <span class="redup">× <?= (int) $baris['jumlah'] ?> unit</span></span>
-<span class="daftar-sub"><?= $mati ? '<span class="teks-merah">' . e($baris['blokir']) . '</span>' : e($ket_b) ?> · kembali <?= e(tgl($a['tgl_selesai'], 'singkat')) ?></span>
+<span class="daftar-sub"><?= $mati ? '<span class="teks-merah">' . e($baris['blokir']) . '</span>' : e($ket_b) ?> · jadwal selesai <?= e(tgl($a['tgl_selesai'], 'singkat')) ?></span>
 </span>
 <span class="sumber sumber-<?= e(strtolower(str_replace(' ', '-', $a['sumber']))) ?>"><?= e($a['sumber']) ?></span>
 </label>
@@ -104,9 +104,9 @@ $judul_k = $a['sumber'] === 'Studio' ? label_unit($baris['unit']) : $a['nama_bar
 <span class="daftar-utama">
 <span class="daftar-judul"><?= e($judul_k) ?> <span class="sumber sumber-<?= e(strtolower(str_replace(' ', '-', $a['sumber']))) ?>"><?= e($a['sumber']) ?></span></span>
 <span class="daftar-sub">Keluar <?= (int) $baris['jumlah_keluar'] ?> · sudah kembali <?= (int) $baris['jumlah_kembali'] ?> · masih di proyek <?= (int) $baris['jumlah'] ?> unit</span>
-<span class="daftar-sub"><?= e(($trx_asal['kode'] ?? '?') . ' · keluar ' . tgl($baris['keluar'], 'singkat_jam') . ' · tempo ' . tgl($a['tgl_selesai'], 'singkat')) ?><?= $a['sumber'] === 'Milik Kru' ? ' · milik ' . e(nama_pengguna($a['pemilik_id'])) : ($a['sumber'] === 'Rental' ? ' · vendor ' . e($a['vendor']) : '') ?></span>
+<span class="daftar-sub"><?= e(($trx_asal['kode'] ?? '?') . ' · keluar ' . tgl($baris['keluar'], 'singkat_jam') . ' · jadwal selesai ' . tgl($a['tgl_selesai'], 'singkat')) ?><?= $a['sumber'] === 'Milik Kru' ? ' · milik ' . e(nama_pengguna($a['pemilik_id'])) : ($a['sumber'] === 'Rental' ? ' · vendor ' . e($a['vendor']) : '') ?></span>
 </span>
-<?= badge($baris['status']) ?>
+<?= $baris['jumlah_kembali'] > 0 ? badge('Kembali Sebagian', 'Kembali sebagian') : badge('Sedang Keluar', 'Masih di proyek') ?>
 </label>
 <input type="hidden" name="saldo[<?= $aid ?>]" value="<?= (int) $baris['jumlah'] ?>">
 <?php if ($a['sumber'] === 'Studio'): ?>

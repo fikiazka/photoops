@@ -9,7 +9,6 @@ $siap = proyek_siap_keluar();
 $jumlah_siap = array_sum(array_column($siap, 'bisa_unit'));
 $di_proyek = ringkasan_barang_proyek();
 $belum_kembali = $di_proyek['daftar'];
-$tempo_dekat = array_filter($belum_kembali, fn ($b) => $b['status'] !== 'Dipinjam');
 $terbuka = insiden_terbuka();
 
 $halaman = ['menu' => 'dashboard', 'bagian' => 'Petugas Inventaris', 'judul' => 'Dashboard'];
@@ -20,7 +19,7 @@ judul_halaman('Halo, ' . nama_depan($pengguna['nama']), tgl(HARI_INI, 'panjang')
 <div class="grid-kpi">
 <a class="kartu kpi kpi-tautan" href="<?= e(url('pages/serah-terima.php')) ?>"><p class="kpi-label">Siap keluar</p><p class="kpi-angka"><?= $jumlah_siap ?></p><p class="kpi-ket">unit menunggu diserahkan</p></a>
 <a class="kartu kpi kpi-tautan" href="<?= e(url('pages/serah-terima.php')) ?>"><p class="kpi-label">Barang di proyek</p><p class="kpi-angka teks-biru" data-kpi-di-proyek><?= $di_proyek['unit'] ?></p><p class="kpi-ket"><?= $di_proyek['unit'] ? e(teks_per_sumber($di_proyek['per_sumber'])) . ' unit belum kembali' : 'semua barang sudah kembali' ?></p></a>
-<a class="kartu kpi kpi-tautan" href="<?= e(url('pages/serah-terima.php')) ?>"><p class="kpi-label">Tempo hari ini / telat</p><p class="kpi-angka<?= $tempo_dekat ? ' teks-merah' : '' ?>"><?= count($tempo_dekat) ?></p><p class="kpi-ket">alokasi perlu ditagih kembali</p></a>
+<a class="kartu kpi kpi-tautan" href="<?= e(url('pages/serah-terima.php')) ?>"><p class="kpi-label">Unit Studio di proyek</p><p class="kpi-angka" data-kpi-studio-di-proyek><?= $di_proyek['unit_studio'] ?></p><p class="kpi-ket"><?= $di_proyek['unit_studio'] ? 'unit fisik belum kembali, tidak tersedia untuk proyek lain' : 'semua unit Studio sudah kembali' ?></p></a>
 <a class="kartu kpi kpi-tautan" href="<?= e(url('pages/perlengkapan.php?tab=insiden')) ?>"><p class="kpi-label">Insiden terbuka</p><p class="kpi-angka<?= $terbuka ? ' teks-kuning' : '' ?>"><?= count($terbuka) ?></p><p class="kpi-ket">unit sedang bermasalah</p></a>
 </div>
 
@@ -32,7 +31,7 @@ judul_halaman('Halo, ' . nama_depan($pengguna['nama']), tgl(HARI_INI, 'panjang')
 <div class="grid-2">
 <section class="kartu">
 <div class="kartu-kepala">
-<div><h2>Jatuh tempo pengembalian</h2><p>Barang Studio, Rental, dan Milik Kru yang masih di proyek.</p></div>
+<div><h2>Barang masih di proyek</h2><p>Barang Studio, Rental, dan Milik Kru yang saldonya belum kembali. Tanggal adalah jadwal selesai proyek, bukan batas pengembalian.</p></div>
 <a href="<?= e(url('pages/serah-terima.php')) ?>" class="tautan-kecil">Buka serah terima</a>
 </div>
 <?php if (!$belum_kembali): ?>
@@ -42,12 +41,12 @@ judul_halaman('Halo, ' . nama_depan($pengguna['nama']), tgl(HARI_INI, 'panjang')
 <?php foreach ($belum_kembali as $b): ?>
 <?php $p = db_cari('proyek', $b['alokasi']['proyek_id']); ?>
 <li class="daftar-baris">
-<span class="ikon-bulat ikon-<?= $b['status'] === 'Terlambat' ? 'merah' : ($b['status'] === 'Hari ini' ? 'kuning' : 'abu') ?>"><?= ikon('clock', 16) ?></span>
+<span class="ikon-bulat ikon-abu"><?= ikon('package', 16) ?></span>
 <div class="daftar-utama">
 <p class="daftar-judul"><?= e($b['alokasi']['sumber'] === 'Studio' ? label_unit($b['unit']) : nama_barang_alokasi($b['alokasi']) . ' × ' . $b['jumlah']) ?></p>
-<p class="daftar-sub"><?= e($b['alokasi']['sumber']) ?> · <?= e($p['kode'] ?? '?') ?> · tempo <?= e(tgl($b['alokasi']['tgl_selesai'], 'singkat')) ?><?= $b['jumlah_kembali'] > 0 ? ' · sisa ' . (int) $b['jumlah'] . ' dari ' . (int) $b['jumlah_keluar'] : '' ?></p>
+<p class="daftar-sub"><?= e($b['alokasi']['sumber']) ?> · <?= e($p['kode'] ?? '?') ?> · jadwal selesai <?= e(tgl($b['alokasi']['tgl_selesai'], 'singkat')) ?><?= $b['jumlah_kembali'] > 0 ? ' · sisa ' . (int) $b['jumlah'] . ' dari ' . (int) $b['jumlah_keluar'] : '' ?></p>
 </div>
-<?= badge($b['status'], $b['status'] === 'Terlambat' ? 'Terlambat ' . hari_terlambat($b['alokasi']) . ' hari' : $b['status']) ?>
+<?= $b['jumlah_kembali'] > 0 ? badge('Kembali Sebagian', 'Kembali sebagian') : badge('Sedang Keluar', 'Masih di proyek') ?>
 </li>
 <?php endforeach; ?>
 </ul>

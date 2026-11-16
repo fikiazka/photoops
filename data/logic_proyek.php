@@ -235,7 +235,7 @@ function pemenuhan_kebutuhan(array $kebutuhan): array
     $proyek = db_cari('proyek', (int) $kebutuhan['proyek_id']);
     $aktif = $proyek && proyek_aktif($proyek);
     $hasil = ['dialokasikan' => 0, 'direncanakan' => 0, 'dikonfirmasi' => 0, 'diperiksa' => 0, 'siap' => 0, 'siap_eksternal' => 0, 'eksternal' => 0,
-        'eksternal_keluar' => 0, 'keluar' => 0, 'di_luar' => 0, 'terlambat' => 0, 'kembali' => 0, 'kembali_bermasalah' => 0];
+        'eksternal_keluar' => 0, 'keluar' => 0, 'di_luar' => 0, 'kembali' => 0, 'kembali_bermasalah' => 0];
     foreach (alokasi_kebutuhan($kebutuhan['id']) as $alokasi) {
         if ($alokasi['status'] === 'Dibatalkan') {
             continue;
@@ -273,9 +273,6 @@ function pemenuhan_kebutuhan(array $kebutuhan): array
             $hasil['kembali_bermasalah'] += $kembali_j - ($serah['kondisi_rincian']['Baik'] ?? 0);
             if ($sisa_j > 0) {
                 $hasil['di_luar'] += $sisa_j;
-                if (status_keluar($alokasi) === 'Terlambat') {
-                    $hasil['terlambat'] += $sisa_j;
-                }
             }
         }
     }
@@ -332,10 +329,8 @@ function status_pergerakan(array $hitung): string
         return '';
     }
     if ($hitung['di_luar'] > 0) {
-        if ($hitung['kembali'] > 0) {
-            return 'Pengembalian Sebagian';
-        }
-        return $hitung['terlambat'] > 0 ? 'Belum Kembali' : 'Sedang Keluar';
+        // Sprint 3E final: berdasarkan saldo transaksi saja, tidak lagi membedakan "lewat jadwal event".
+        return $hitung['kembali'] > 0 ? 'Pengembalian Sebagian' : 'Belum Kembali';
     }
     return $hitung['eksternal'] > 0 ? 'Studio Sudah Kembali' : 'Sudah Kembali';
 }
@@ -713,6 +708,11 @@ function simpan_proyek_dari_form(array $pengguna): void
         atur_pic($id, $isi['pic_id']);
         $ganti = $lama['status'] !== $isi['status'];
         catat_riwayat('Proyek', $lama['kode'] . ' · ' . $isi['nama'], $ganti ? 'Status proyek diubah' : 'Detail proyek diperbarui', $ganti ? $lama['status'] : '', $ganti ? $isi['status'] : '');
+        if ((string) $lama['deadline_persiapan'] !== (string) $isi['deadline_persiapan']) {
+            // Sprint 3E: perubahan deadline dicatat eksplisit (lama → baru, format Y-m-d H:i) agar ketepatan waktu konfirmasi
+            // yang terjadi sebelum perubahan tetap dinilai terhadap deadline saat itu.
+            catat_riwayat('Proyek', $lama['kode'] . ' · ' . $isi['nama'], 'Deadline persiapan diubah', (string) $lama['deadline_persiapan'], (string) $isi['deadline_persiapan']);
+        }
         flash('sukses', 'Proyek ' . $lama['kode'] . ' diperbarui.');
         muat_ulang();
     }
