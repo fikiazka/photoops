@@ -13,9 +13,10 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     kebutuhan_proyek, alokasi_barang, perlengkapan
 TO photoops_si3_app;
 
--- Data yang diubah tetapi tidak pernah dihapus lewat aplikasi.
--- Pengguna cukup dinonaktifkan; kategori hanya diperbarui nomor_terakhir-nya.
+-- Data yang diubah tetapi tidak pernah dihapus lewat aplikasi; kategori hanya diperbarui nomor_terakhir-nya.
 GRANT SELECT, INSERT, UPDATE ON pengguna, persiapan_proyek, laporan_insiden TO photoops_si3_app;
+-- Akun pengguna boleh dihapus hanya bila belum dirujuk data lain; FOREIGN KEY (tanpa CASCADE) menolak sisanya.
+GRANT DELETE ON pengguna TO photoops_si3_app;
 GRANT SELECT, UPDATE ON kategori_perlengkapan TO photoops_si3_app;
 
 -- Histori serah terima dan log aktivitas: hanya boleh ditambah, tidak boleh diubah atau dihapus.

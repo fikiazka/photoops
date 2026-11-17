@@ -261,6 +261,16 @@ textarea {
   gap: 4px;
 }
 
+.sidebar-keluar {
+  display: contents;
+}
+
+.sandi-sementara {
+  font-family: ui-monospace, Consolas, monospace;
+  letter-spacing: 0.04em;
+  user-select: all;
+}
+
 .sidebar-akun {
   padding: 0 12px 8px;
   display: flex;
@@ -1230,6 +1240,37 @@ h3 {
 
 .kartu-kepala-saring {
   align-items: center;
+}
+
+.saring-pengguna {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.saring-pengguna select {
+  flex: none;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--field);
+  border-radius: var(--radius-tombol);
+  background: var(--surface);
+  font-size: 14px;
+}
+
+.saring-pengguna .cari {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Empat tombol aksi pengguna tetap satu baris (tidak menumpuk ke bawah). */
+.tabel-pengguna .aksi-baris {
+  flex-wrap: nowrap;
+}
+
+.tabel-pengguna .tombol-ikon[aria-disabled="true"] {
+  opacity: .4;
+  cursor: not-allowed;
 }
 
 .saring {
@@ -2299,6 +2340,10 @@ fieldset.bidang legend {
   }
 
   .kartu-kepala-saring > * {
+    width: 100%;
+  }
+
+  .saring-pengguna .cari input {
     width: 100%;
   }
 

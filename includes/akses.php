@@ -1,10 +1,25 @@
 <?php
 defined('ROOT') || exit;
 
+// Akun yang sedang login dibaca ulang dari PostgreSQL setiap request,
+// sehingga perubahan peran atau penonaktifan langsung berlaku. Session hanya menyimpan user_id.
 function pengguna_masuk(): ?array
 {
     $id = $_SESSION['user_id'] ?? null;
-    return $id ? db_cari('pengguna', $id) : null;
+    if (!is_int($id)) {
+        return null;
+    }
+    try {
+        return cari_pengguna($id);
+    } catch (Throwable $e) {
+        if (!galat_db($e)) {
+            throw $e;
+        }
+        // Database tidak bisa diakses: keluarkan sesi, tanpa memakai data akun lain.
+        unset($_SESSION['user_id']);
+        flash('error', 'Layanan database sedang tidak tersedia. Silakan masuk kembali beberapa saat lagi.');
+        return null;
+    }
 }
 
 function beranda(string $peran): string
@@ -44,7 +59,7 @@ function hak_akses(): array
 function boleh(string $kunci): bool
 {
     $pengguna = pengguna_masuk();
-    if (!$pengguna) {
+    if (!$pengguna || $pengguna['status'] !== 'Aktif') {
         return false;
     }
     return in_array($pengguna['peran'], hak_akses()[$kunci] ?? [], true);
@@ -55,7 +70,9 @@ function wajib_login(): array
     $pengguna = pengguna_masuk();
     if (!$pengguna || $pengguna['status'] !== 'Aktif') {
         unset($_SESSION['user_id']);
-        flash('info', 'Silakan masuk terlebih dahulu.');
+        if (empty($_SESSION['flash'])) {
+            flash('info', 'Silakan masuk terlebih dahulu.');
+        }
         arahkan('index.php');
     }
     return $pengguna;

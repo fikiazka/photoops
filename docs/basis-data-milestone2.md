@@ -330,7 +330,7 @@ Tiga aturan bertanda "Aplikasi (dalam transaksi)" melibatkan banyak baris sekali
 
 **Pembuatan database.** `database/pendukung/000_setup.sql` dijalankan oleh admin untuk membuat role dan database. Sesudah itu `001_schema.sql` membuat tabel, `002_seed_demo.sql` mengisi data contoh, dan `003_hak_akses.sql` memberi hak minimum kepada role aplikasi:
 - role aplikasi boleh menambah dan membaca transaksi serta log, tetapi tidak boleh mengubah atau menghapusnya;
-- akun pengguna tidak boleh dihapus;
+- akun pengguna hanya bisa dihapus bila belum dirujuk data lain (ditolak FOREIGN KEY tanpa CASCADE); akun yang sudah dipakai cukup dinonaktifkan;
 - password role tidak ditulis di file mana pun yang masuk Git.
 
 **Contoh CREATE TABLE.** Tabel `alokasi_barang` (Kode 3.1) menunjukkan cara satu tabel menampung tiga sumber barang dengan satu CHECK.

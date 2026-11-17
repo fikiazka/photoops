@@ -41,7 +41,7 @@ if (is_post()) {
 
     if ($aksi === 'tambah_anggota') {
         wajib_boleh('anggota.kelola');
-        $calon = db_cari('pengguna', (int) input('pengguna_id'));
+        $calon = cari_pengguna((int) input('pengguna_id'));
         if (!$calon || $calon['peran'] !== 'us' || $calon['status'] !== 'Aktif') {
             simpan_form('dialog-anggota', [], ['pengguna_id' => 'Pilih user yang aktif.']);
             muat_ulang();

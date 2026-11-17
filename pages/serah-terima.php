@@ -84,7 +84,7 @@ if (is_post()) {
             }
         }
         $penerima_id = input('penerima_id');
-        $penerima = preg_match('/^\d{1,9}$/', $penerima_id) && isset(penerima_proyek($proyek['id'])[$penerima_id]) ? db_cari('pengguna', (int) $penerima_id) : null;
+        $penerima = preg_match('/^\d{1,9}$/', $penerima_id) && isset(penerima_proyek($proyek['id'])[$penerima_id]) ? cari_pengguna((int) $penerima_id) : null;
         if (!$penerima) {
             $galat['penerima_id'] = 'Pilih penerima dari anggota tim proyek yang aktif.';
         }
@@ -249,7 +249,7 @@ if (is_post()) {
         if (isset($_POST['penyerah_id']) && !is_string($_POST['penyerah_id'])) {
             $galat['penyerah_id'] = 'Pilih anggota tim yang menyerahkan, atau kosongkan.';
         } elseif ($penyerah_id !== '') {
-            $penyerah = preg_match('/^\d{1,9}$/', $penyerah_id) && peran_di_proyek($pid_kembali, (int) $penyerah_id) !== '' ? db_cari('pengguna', (int) $penyerah_id) : null;
+            $penyerah = preg_match('/^\d{1,9}$/', $penyerah_id) && peran_di_proyek($pid_kembali, (int) $penyerah_id) !== '' ? cari_pengguna((int) $penyerah_id) : null;
             if (!$penyerah) {
                 $galat['penyerah_id'] = 'Pilih anggota tim yang menyerahkan, atau kosongkan.';
             }

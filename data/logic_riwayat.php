@@ -14,9 +14,33 @@ function catat_riwayat(string $aksi, string $objek, string $keterangan, string $
     ]);
 }
 
+// Audit Manajemen Pengguna disimpan di PostgreSQL (aksi 'Pengguna'), di dalam transaksi yang sama
+// dengan perubahan akunnya. Log modul operasional lain masih memakai catat_riwayat() (session).
+function catat_riwayat_pengguna(string $objek, string $keterangan, string $lama = '', string $baru = ''): void
+{
+    sql_jalankan("INSERT INTO riwayat_aktivitas (waktu, pengguna_id, aksi, objek, keterangan, lama, baru)
+                  VALUES (:waktu, :pengguna_id, 'Pengguna', :objek, :keterangan, :lama, :baru)", [
+        'waktu' => date('Y-m-d H:i:s'),
+        'pengguna_id' => $_SESSION['user_id'] ?? null,
+        'objek' => $objek,
+        'keterangan' => $keterangan,
+        'lama' => $lama,
+        'baru' => $baru,
+    ]);
+}
+
+// Halaman Riwayat: log session (selain Pengguna) digabung dengan audit Pengguna dari PostgreSQL.
+// ID baris PostgreSQL dibuat negatif agar tidak bertabrakan dengan ID log session.
 function daftar_riwayat(): array
 {
-    $baris = array_values(db('riwayat'));
+    $baris = array_values(array_filter(db('riwayat'), fn ($r) => $r['aksi'] !== 'Pengguna'));
+    $audit = sql_semua("SELECT id, TO_CHAR(waktu, 'YYYY-MM-DD HH24:MI') AS waktu, pengguna_id, aksi, objek, keterangan, lama, baru
+                        FROM riwayat_aktivitas
+                        WHERE aksi = 'Pengguna'");
+    foreach ($audit as $r) {
+        $r['id'] = -(int) $r['id'];
+        $baris[] = $r;
+    }
     usort($baris, fn ($a, $b) => strcmp($b['waktu'], $a['waktu']) ?: $b['id'] <=> $a['id']);
     return $baris;
 }

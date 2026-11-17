@@ -70,7 +70,7 @@ function anggota_proyek(int $proyek_id): array
     $hasil = [];
     foreach (db('anggota_proyek') as $anggota) {
         if ((int) $anggota['proyek_id'] === $proyek_id) {
-            $anggota['pengguna'] = db_cari('pengguna', $anggota['pengguna_id']);
+            $anggota['pengguna'] = cari_pengguna($anggota['pengguna_id']);
             if ($anggota['pengguna']) {
                 $hasil[] = $anggota;
             }
@@ -640,7 +640,7 @@ function validasi_proyek(array $data): array
     } elseif ($mulai && $deadline > $mulai) {
         $galat['deadline_persiapan'] = 'Batas persiapan harus sebelum acara dimulai.';
     }
-    $pic = db_cari('pengguna', (int) $data['pic_id']);
+    $pic = cari_pengguna((int) $data['pic_id']);
     if (!$pic || $pic['peran'] !== 'us') {
         $galat['pic_id'] = 'Pilih PIC dari daftar kru.';
     }
