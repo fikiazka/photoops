@@ -35,7 +35,7 @@ $tren = tren_mingguan(6);
 $tren_maks = max(1, ...array_values(array_map(fn ($t) => max($t['Keluar'], $t['Kembali']), $tren)));
 
 $kondisi = array_fill_keys(daftar_kondisi(), 0);
-foreach (db('perlengkapan') as $u) {
+foreach (semua_perlengkapan() as $u) {
     if ($u['status_aktif'] === 'Aktif') {
         $kondisi[$u['kondisi']]++;
     }
@@ -185,7 +185,7 @@ judul_halaman('Selamat datang, ' . nama_depan($pengguna['nama']), tgl(HARI_INI, 
 <p class="label-kecil">Paling sering</p>
 <ul class="metrik-daftar">
 <?php foreach ($sering as $id => $n): ?>
-<?php $u = db_cari('perlengkapan', $id); ?>
+<?php $u = cari_perlengkapan($id); ?>
 <li>
 <div class="batang-tumpuk-label"><span><?= e($u['kode_unit'] ?? '?') ?> <span class="redup"><?= e($u['nama'] ?? '') ?></span></span><strong><?= $n ?>×</strong></div>
 <?= bilah(persen($n, $frek_maks), 'tinta') ?>
@@ -197,7 +197,7 @@ judul_halaman('Selamat datang, ' . nama_depan($pengguna['nama']), tgl(HARI_INI, 
 <p class="label-kecil">Paling jarang</p>
 <ul class="metrik-daftar">
 <?php foreach ($jarang as $id => $n): ?>
-<?php $u = db_cari('perlengkapan', $id); ?>
+<?php $u = cari_perlengkapan($id); ?>
 <li>
 <div class="batang-tumpuk-label"><span><?= e($u['kode_unit'] ?? '?') ?> <span class="redup"><?= e($u['nama'] ?? '') ?></span></span><strong><?= $n ?>×</strong></div>
 <?= bilah(persen($n, $frek_maks), 'abu') ?>

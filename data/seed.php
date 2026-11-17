@@ -29,45 +29,8 @@ function seed_data(): array
             ]
         ),
 
-        'kategori' => seed_tabel(
-            ['id', 'nama', 'kode_awalan', 'deskripsi'],
-            [
-                [1, 'Kamera', 'CAM', 'Body kamera foto dan video'],
-                [2, 'Lensa', 'LNS', 'Lensa semua mount'],
-                [3, 'Pencahayaan', 'LGT', 'Lampu LED, flash, softbox'],
-                [4, 'Aksesori', 'STD', 'Stand, tripod, gimbal'],
-                [5, 'Penyimpanan', 'MEM', 'SD card, SSD, card reader'],
-            ]
-        ),
-
-        'perlengkapan' => seed_tabel(
-            ['id', 'kode_unit', 'nama', 'merek', 'kategori_id', 'kondisi', 'status_aktif', 'catatan'],
-            [
-                [1, 'CAM-001', 'Sony A7 III', 'Sony', 1, 'Baik', 'Aktif', ''],
-                [2, 'CAM-002', 'Sony A7 III', 'Sony', 1, 'Baik', 'Aktif', ''],
-                [3, 'CAM-003', 'Canon EOS R6', 'Canon', 1, 'Baik', 'Aktif', ''],
-                [4, 'CAM-004', 'Sony A7 III', 'Sony', 1, 'Baik', 'Aktif', ''],
-                [5, 'CAM-005', 'Fujifilm X-T4', 'Fujifilm', 1, 'Baik', 'Aktif', ''],
-                [6, 'LNS-001', 'Sony FE 24–70mm', 'Sony', 2, 'Baik', 'Aktif', ''],
-                [7, 'LNS-002', 'Sony FE 24–70mm', 'Sony', 2, 'Baik', 'Aktif', ''],
-                [8, 'LNS-003', 'Sony FE 85mm f/1.8', 'Sony', 2, 'Baik', 'Aktif', ''],
-                [9, 'LNS-004', 'Canon RF 24–105mm', 'Canon', 2, 'Baik', 'Aktif', ''],
-                [10, 'LNS-005', 'Sigma 35mm f/1.4 DG DN', 'Sigma', 2, 'Baik', 'Aktif', ''],
-                [11, 'LGT-001', 'Godox SL60W', 'Godox', 3, 'Maintenance', 'Aktif', 'Kipas pendingin diservis'],
-                [12, 'LGT-002', 'Godox SL60W', 'Godox', 3, 'Baik', 'Aktif', ''],
-                [13, 'LGT-003', 'Aputure Amaran 100d', 'Aputure', 3, 'Baik', 'Aktif', ''],
-                [14, 'STD-001', 'Light Stand 2.8m', 'Takara', 4, 'Rusak', 'Aktif', 'Kaki patah'],
-                [15, 'STD-002', 'Light Stand 2.8m', 'Takara', 4, 'Baik', 'Aktif', ''],
-                [16, 'STD-003', 'Light Stand 2.8m', 'Takara', 4, 'Baik', 'Aktif', ''],
-                [17, 'STD-004', 'Light Stand 2.8m', 'Takara', 4, 'Baik', 'Aktif', ''],
-                [18, 'STD-005', 'Tripod Manfrotto 190X', 'Manfrotto', 4, 'Baik', 'Aktif', ''],
-                [19, 'STD-006', 'Gimbal DJI RS3 Mini', 'DJI', 4, 'Baik', 'Aktif', ''],
-                [20, 'MEM-001', 'SD Card 128GB', 'SanDisk', 5, 'Baik', 'Aktif', ''],
-                [21, 'MEM-002', 'SD Card 128GB', 'SanDisk', 5, 'Baik', 'Aktif', ''],
-                [22, 'MEM-003', 'SD Card 128GB', 'SanDisk', 5, 'Baik', 'Aktif', ''],
-                [23, 'MEM-004', 'SD Card 128GB', 'SanDisk', 5, 'Baik', 'Aktif', ''],
-            ]
-        ),
+        // Kategori dan unit inventaris Studio tidak disimpan di session: sumbernya tabel PostgreSQL kategori_perlengkapan
+        // dan perlengkapan (database/002_seed_demo.sql). perlengkapan_id pada alokasi/insiden di bawah merujuk ID tabel itu.
 
         'proyek' => seed_tabel(
             ['id', 'kode', 'nama', 'klien', 'lokasi', 'mulai', 'selesai', 'deadline_persiapan', 'status', 'pic_id', 'catatan', 'dibuat_oleh'],

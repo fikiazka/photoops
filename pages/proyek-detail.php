@@ -207,7 +207,7 @@ if (is_post()) {
         if (!in_array($data['sumber'], daftar_sumber(), true)) {
             $galat['sumber'] = 'Pilih sumber barang.';
         } elseif ($data['sumber'] === 'Studio') {
-            $unit = db_cari('perlengkapan', (int) $data['perlengkapan_id']);
+            $unit = cari_perlengkapan((int) $data['perlengkapan_id']);
             if (!$unit) {
                 $galat['perlengkapan_id'] = 'Pilih unit.';
             } elseif ((int) $unit['kategori_id'] !== (int) $k['kategori_id']) {
@@ -268,7 +268,7 @@ if (is_post()) {
         }
         $serah = serah_alokasi($a['id']);
         $nama = nama_barang_alokasi($a);
-        $unit = $a['sumber'] === 'Studio' ? db_cari('perlengkapan', (int) $a['perlengkapan_id']) : null;
+        $unit = $a['sumber'] === 'Studio' ? cari_perlengkapan((int) $a['perlengkapan_id']) : null;
         if ($serah) {
             flash('error', $nama . ' sudah tercatat di serah terima' . (isset($serah['kembali']) ? ' (keluar dan sudah dikembalikan)' : ' dan masih di luar') . '. Alokasinya dikunci agar riwayat transaksi tetap sah.');
         } elseif ($aksi === 'konfirmasi_alokasi' && $a['status'] !== 'Direncanakan') {

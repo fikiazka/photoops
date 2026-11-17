@@ -29,14 +29,34 @@ function catat_riwayat_pengguna(string $objek, string $keterangan, string $lama 
     ]);
 }
 
-// Halaman Riwayat: log session (selain Pengguna) digabung dengan audit Pengguna dari PostgreSQL.
+// Audit Inventaris Studio (aksi 'Perlengkapan') juga di PostgreSQL, dipanggil di dalam transaksi
+// yang sama dengan INSERT/UPDATE unitnya. Bila pencatatan gagal, perubahan unit ikut dibatalkan (ROLLBACK).
+function catat_riwayat_perlengkapan(string $objek, string $keterangan, string $lama = '', string $baru = ''): void
+{
+    sql_jalankan("INSERT INTO riwayat_aktivitas (waktu, pengguna_id, aksi, objek, keterangan, lama, baru)
+                  VALUES (:waktu, :pengguna_id, 'Perlengkapan', :objek, :keterangan, :lama, :baru)", [
+        'waktu' => date('Y-m-d H:i:s'),
+        'pengguna_id' => $_SESSION['user_id'] ?? null,
+        'objek' => $objek,
+        'keterangan' => $keterangan,
+        'lama' => $lama,
+        'baru' => $baru,
+    ]);
+}
+
+// Aksi riwayat yang sumbernya PostgreSQL. Aksi lain masih dari log session.
+const AKSI_RIWAYAT_DB = ['Pengguna', 'Perlengkapan'];
+
+// Halaman Riwayat: log session (selain AKSI_RIWAYAT_DB) digabung dengan audit dari PostgreSQL.
+// Tabel riwayat_aktivitas juga berisi data contoh aksi lain (Alokasi, Insiden, ...) yang sama dengan log session;
+// karena itu yang diambil dari database hanya AKSI_RIWAYAT_DB agar tidak tampil ganda.
 // ID baris PostgreSQL dibuat negatif agar tidak bertabrakan dengan ID log session.
 function daftar_riwayat(): array
 {
-    $baris = array_values(array_filter(db('riwayat'), fn ($r) => $r['aksi'] !== 'Pengguna'));
+    $baris = array_values(array_filter(db('riwayat'), fn ($r) => !in_array($r['aksi'], AKSI_RIWAYAT_DB, true)));
     $audit = sql_semua("SELECT id, TO_CHAR(waktu, 'YYYY-MM-DD HH24:MI') AS waktu, pengguna_id, aksi, objek, keterangan, lama, baru
                         FROM riwayat_aktivitas
-                        WHERE aksi = 'Pengguna'");
+                        WHERE aksi IN ('Pengguna', 'Perlengkapan')");
     foreach ($audit as $r) {
         $r['id'] = -(int) $r['id'];
         $baris[] = $r;

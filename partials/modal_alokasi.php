@@ -7,7 +7,7 @@ $nilai = fn (string $kunci, string $bawaan = '') => $milik_dialog ? lama($kunci,
 $galat_di = fn (string $kunci) => $milik_dialog ? pesan_galat($kunci) : '';
 $attr_di = fn (string $kunci) => $milik_dialog ? attr_galat($kunci) : '';
 
-$unit_kategori = array_filter(db('perlengkapan'), fn ($u) => (int) $u['kategori_id'] === (int) $kd['kategori_id']);
+$unit_kategori = array_filter(semua_perlengkapan(), fn ($u) => (int) $u['kategori_id'] === (int) $kd['kategori_id']);
 usort($unit_kategori, function ($a, $b) use ($kd) {
     $cocok_a = $kd['acuan'] !== '' && $a['nama'] === $kd['acuan'] ? 0 : 1;
     $cocok_b = $kd['acuan'] !== '' && $b['nama'] === $kd['acuan'] ? 0 : 1;

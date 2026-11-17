@@ -120,7 +120,7 @@ function validasi_kebutuhan(array $data, ?array $lama): array
     } elseif ($panjang_nama > 60) {
         $galat['nama'] = 'Nama kebutuhan maksimal 60 karakter.';
     }
-    if (!db_cari('kategori', (int) $data['kategori_id'])) {
+    if (!cari_kategori((int) $data['kategori_id'])) {
         $galat['kategori_id'] = 'Pilih kategori.';
     } elseif ($lama && (int) $data['kategori_id'] !== (int) $lama['kategori_id']) {
         $aktif = count(array_filter(alokasi_kebutuhan($lama['id']), fn ($a) => $a['status'] !== 'Dibatalkan'));
@@ -225,7 +225,7 @@ function alokasi_siap(array $alokasi, array $diperiksa): bool
     if ($alokasi['sumber'] !== 'Studio') {
         return empty($alokasi['dikembalikan_vendor_pada']);
     }
-    $unit = db_cari('perlengkapan', (int) $alokasi['perlengkapan_id']);
+    $unit = cari_perlengkapan((int) $alokasi['perlengkapan_id']);
     return $unit && $unit['status_aktif'] === 'Aktif' && $unit['kondisi'] === 'Baik' && !alokasi_keluar_unit($unit['id']);
 }
 
@@ -338,7 +338,7 @@ function status_pergerakan(array $hitung): string
 function nama_barang_alokasi(array $alokasi): string
 {
     if ($alokasi['sumber'] === 'Studio') {
-        return db_cari('perlengkapan', (int) $alokasi['perlengkapan_id'])['nama'] ?? 'Unit dihapus';
+        return cari_perlengkapan((int) $alokasi['perlengkapan_id'])['nama'] ?? 'Unit dihapus';
     }
     return $alokasi['nama_barang'];
 }
@@ -346,7 +346,7 @@ function nama_barang_alokasi(array $alokasi): string
 function keterangan_sumber(array $alokasi): string
 {
     if ($alokasi['sumber'] === 'Studio') {
-        return db_cari('perlengkapan', (int) $alokasi['perlengkapan_id'])['kode_unit'] ?? '—';
+        return cari_perlengkapan((int) $alokasi['perlengkapan_id'])['kode_unit'] ?? '—';
     }
     if ($alokasi['sumber'] === 'Rental') {
         return $alokasi['vendor'];
@@ -420,7 +420,7 @@ function alokasi_sesuai_kebutuhan(array $alokasi, ?array $kebutuhan, int $proyek
         return false;
     }
     if ($alokasi['sumber'] === 'Studio') {
-        $unit = db_cari('perlengkapan', (int) $alokasi['perlengkapan_id']);
+        $unit = cari_perlengkapan((int) $alokasi['perlengkapan_id']);
         return !$unit || (int) $unit['kategori_id'] === (int) $kebutuhan['kategori_id'];
     }
     if (trim((string) $alokasi['nama_barang']) === '') {
@@ -462,7 +462,7 @@ function syarat_persiapan(array $proyek): array
         if ($keluar) {
             $h['sudah_keluar']++;
         }
-        $unit = $a['sumber'] === 'Studio' ? db_cari('perlengkapan', (int) $a['perlengkapan_id']) : null;
+        $unit = $a['sumber'] === 'Studio' ? cari_perlengkapan((int) $a['perlengkapan_id']) : null;
         $lain = $unit && !$keluar ? alokasi_keluar_unit((int) $unit['id']) : null;
         $masalah = '';
         if (!alokasi_sesuai_kebutuhan($a, $k, $pid)) {
@@ -796,7 +796,7 @@ function masalah_operasional(): array
             if ($alokasi['sumber'] !== 'Studio' || sedang_keluar($alokasi) || sudah_kembali($alokasi)) {
                 continue;
             }
-            $unit = db_cari('perlengkapan', (int) $alokasi['perlengkapan_id']);
+            $unit = cari_perlengkapan((int) $alokasi['perlengkapan_id']);
             if (!$unit) {
                 continue;
             }

@@ -60,7 +60,7 @@ function alasan_tidak_bisa_keluar(array $alokasi, array $diperiksa): string
         return 'Tidak sesuai dengan kebutuhan proyek';
     }
     if ($alokasi['sumber'] === 'Studio') {
-        $unit = db_cari('perlengkapan', (int) $alokasi['perlengkapan_id']);
+        $unit = cari_perlengkapan((int) $alokasi['perlengkapan_id']);
         if (!$unit) {
             return 'Unit sudah dihapus';
         }
@@ -99,7 +99,7 @@ function alokasi_siap_keluar(int $proyek_id): array
         }
         $hasil[] = [
             'alokasi' => $alokasi,
-            'unit' => $alokasi['sumber'] === 'Studio' ? db_cari('perlengkapan', (int) $alokasi['perlengkapan_id']) : null,
+            'unit' => $alokasi['sumber'] === 'Studio' ? cari_perlengkapan((int) $alokasi['perlengkapan_id']) : null,
             'jumlah' => jumlah_alokasi($alokasi),
             'blokir' => alasan_tidak_bisa_keluar($alokasi, $diperiksa),
         ];
@@ -139,7 +139,7 @@ function unit_belum_kembali(?int $proyek_id = null): array
         if ($proyek_id !== null && (int) $alokasi['proyek_id'] !== $proyek_id) {
             continue;
         }
-        $hasil[] = ['alokasi' => $alokasi, 'unit' => db_cari('perlengkapan', (int) $alokasi['perlengkapan_id']), 'keluar' => serah_alokasi($alokasi['id'])['keluar']];
+        $hasil[] = ['alokasi' => $alokasi, 'unit' => cari_perlengkapan((int) $alokasi['perlengkapan_id']), 'keluar' => serah_alokasi($alokasi['id'])['keluar']];
     }
     usort($hasil, fn ($a, $b) => strcmp($a['alokasi']['tgl_selesai'], $b['alokasi']['tgl_selesai']));
     return $hasil;
@@ -159,7 +159,7 @@ function barang_di_luar(?int $proyek_id = null): array
         $kembali = $serah['jumlah_kembali'] ?? 0;
         $hasil[] = [
             'alokasi' => $alokasi,
-            'unit' => $alokasi['sumber'] === 'Studio' ? db_cari('perlengkapan', (int) $alokasi['perlengkapan_id']) : null,
+            'unit' => $alokasi['sumber'] === 'Studio' ? cari_perlengkapan((int) $alokasi['perlengkapan_id']) : null,
             'jumlah' => max(0, $keluar - $kembali),
             'jumlah_keluar' => $keluar,
             'jumlah_kembali' => $kembali,
@@ -323,7 +323,7 @@ function proses_pengembalian(array $proyek, array $item, ?array $penyerah, strin
                 continue;
             }
             if ($alokasi['sumber'] === 'Studio') {
-                $unit = db_cari('perlengkapan', (int) $alokasi['perlengkapan_id']);
+                $unit = cari_perlengkapan((int) $alokasi['perlengkapan_id']);
                 $deskripsi = ($catatan !== '' ? $catatan . ' · ' : '') . 'Dilaporkan saat pengembalian ' . $kode . ' (barang keluar ' . (db_cari('transaksi', (int) $baris['trx_asal'])['kode'] ?? '?') . ').';
                 $kode_ins = lapor_insiden((int) $alokasi['perlengkapan_id'], (int) $proyek['id'], $kondisi === 'Rusak' ? 'Rusak' : 'Masalah Teknis', $deskripsi, $kondisi);
                 foreach (db('insiden') as $ins) {

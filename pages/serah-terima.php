@@ -279,7 +279,17 @@ if (is_post()) {
             simpan_form($modal, ['alokasi' => $lama_pilih, 'penyerah_id' => $penyerah_id, 'waktu' => input('waktu'), 'catatan' => $catatan], $galat);
             muat_ulang();
         }
-        $hasil = proses_pengembalian($proyek, $item, $penyerah, $waktu, $catatan);
+        // Pengembalian Rusak/Maintenance juga mengubah kondisi unit di PostgreSQL; dijalankan sebagai satu kesatuan.
+        try {
+            $hasil = proses_session_dan_inventaris(fn () => proses_pengembalian($proyek, $item, $penyerah, $waktu, $catatan));
+        } catch (Throwable $e) {
+            if (!galat_db($e)) {
+                throw $e;
+            }
+            error_log('PhotoOps: pengembalian gagal: ' . $e->getMessage());
+            flash('error', 'Pengembalian belum dicatat karena database sedang bermasalah. Tidak ada data yang berubah; coba lagi.');
+            muat_ulang();
+        }
         $pesan = $hasil['kode'] . ': ' . $hasil['total'] . ' unit kembali dari ' . $proyek['kode'] . ' (' . teks_per_sumber($hasil['per_sumber']) . '; kondisi ' . teks_kondisi($hasil['per_kondisi']) . ')';
         $pesan .= $hasil['sisa_proyek'] > 0 ? ', sisa di proyek ' . $hasil['sisa_proyek'] . ' unit' : ', seluruh barang proyek sudah kembali';
         $pesan .= $hasil['bermasalah'] ? '. Insiden dicatat untuk ' . implode(', ', $hasil['bermasalah']) . ' (' . implode(', ', $hasil['insiden']) . ')' : '';
