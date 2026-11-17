@@ -136,7 +136,6 @@ if (is_post()) {
 $tab = in_array(query('tab'), ['eksternal', 'insiden'], true) ? query('tab') : 'unit';
 $kelola = boleh('perlengkapan.kelola');
 $ringkas = ringkasan_pemakaian();
-$frekuensi = frekuensi_pakai();
 $terbuka = insiden_terbuka();
 $eksternal = daftar_barang_eksternal();
 $ringkas_eks = ringkasan_eksternal($eksternal);
@@ -384,7 +383,7 @@ $unit_tampil = array_filter(db('perlengkapan'), function ($u) use ($f_kategori, 
 </div>
 <div class="tabel-wrap">
 <table class="tabel tabel-kartu">
-<thead><tr><th>Unit</th><th>Kondisi</th><th>Pemakaian</th><th class="angka">Dipakai</th><?= $kelola ? '<th><span class="sr">Aksi</span></th>' : '' ?></tr></thead>
+<thead><tr><th>Unit</th><th>Kondisi</th><th>Pemakaian</th><?= $kelola ? '<th><span class="sr">Aksi</span></th>' : '' ?></tr></thead>
 <tbody>
 <?php foreach ($unit_kat as $u): ?>
 <?php
@@ -405,7 +404,6 @@ $berikut = jadwal_berikutnya($u['id']);
 <div class="kecil redup">Berikutnya <?= e($pb['kode'] ?? '?') ?> · <?= e(rentang_tgl($berikut['tgl_mulai'], $berikut['tgl_selesai'])) ?></div>
 <?php endif; ?>
 </td>
-<td data-label="Dipakai" class="angka"><?= $frekuensi[$u['id']] ?? 0 ?>×</td>
 <?php if ($kelola): ?>
 <td class="kolom-aksi">
 <div class="aksi-baris">
