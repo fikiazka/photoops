@@ -57,7 +57,7 @@ $terlambat_historis = pengembalian_terlambat_historis();
 $halaman = ['menu' => 'dashboard', 'bagian' => 'Super Admin', 'judul' => 'Dashboard'];
 require ROOT . '/includes/layout_head.php';
 
-judul_halaman('Selamat datang, ' . nama_depan($pengguna['nama']), tgl(HARI_INI, 'panjang') . ' · ringkasan operasional studio dan perlengkapan.', tombol_modal('dialog-proyek', 'Proyek baru', ['_judul' => 'Proyek baru'], 'plus'));
+judul_halaman('Selamat datang, ' . nama_depan($pengguna['nama']), tgl(HARI_INI, 'panjang') . ' · ringkasan operasional studio dan perlengkapan.');
 ?>
 <div class="grid-kpi grid-kpi-5">
 <a class="kartu kpi kpi-tautan" href="<?= e(url('pages/proyek.php?status=aktif')) ?>">
