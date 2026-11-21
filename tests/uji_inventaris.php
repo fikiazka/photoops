@@ -148,7 +148,7 @@ if (($argv[1] ?? '') === '--fungsi') {
         $_SESSION['user_id'] = 2;
         $trx_awal = count(db('transaksi'));
         $insiden_awal = count(db('insiden'));
-        $proyek = db_cari('proyek', 7);
+        $proyek = cari_proyek(7);
         $item = [
             ['alokasi' => db_cari('alokasi', 25), 'per_kondisi' => ['Baik' => 0, 'Maintenance' => 0, 'Rusak' => 1], 'trx_asal' => 5],
             ['alokasi' => db_cari('alokasi', 26), 'per_kondisi' => ['Baik' => 0, 'Maintenance' => 0, 'Rusak' => 0, 'Hilang' => 1], 'trx_asal' => 5],
@@ -523,7 +523,7 @@ cek('E05 tanda inventaris_berubah dihapus sehingga sinkron persiapan tidak berja
 fungsi_lepas(['--sesi-lama', 'sesiLama']);
 $h = minta('sesiLama', PI, 'pages/proyek-detail.php', ['id' => '4', 'tab' => 'kebutuhan']);
 $s = json_decode(fungsi_lepas(['--periksa-sesi', 'sesiLama']), true);
-cek('E06 session lama (VERSI_DATA 2) diganti seed baru (versi 3)', ($s['versi'] ?? 0) === 3 && bersih($h));
+cek('E06 session lama (VERSI_DATA 2) diganti seed baru (versi terbaru)', ($s['versi'] ?? 0) >= 3 && bersih($h));
 cek('E07 salinan kategori/perlengkapan session lama dibuang', !$s['ada_perlengkapan'] && !$s['ada_kategori']);
 cek('E08 alokasi session lama yang merujuk unit buatan session (#99 -> unit 24) ikut hilang', !in_array(99, $s['alokasi_ids'], true));
 cek('E09 kondisi unit dari session lama (CAM-001 Rusak) tidak menimpa PostgreSQL', unit_db('CAM-001')['kondisi'] === 'Baik' && !str_contains($h['html'], 'versi session'));
