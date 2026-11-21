@@ -2,7 +2,7 @@
 defined('ROOT') || exit;
 
 $opsi_unit = [];
-foreach (db('perlengkapan') as $u) {
+foreach (semua_perlengkapan() as $u) {
     $opsi_unit[$u['id']] = label_unit($u) . ' · ' . $u['kondisi'];
 }
 $opsi_proyek_insiden = [];

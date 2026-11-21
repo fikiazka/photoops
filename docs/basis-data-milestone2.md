@@ -1,0 +1,589 @@
+# Basis Data PhotoOps — Bahan Laporan Milestone 2
+
+Dokumen ini adalah bahan untuk Bab 2.3, Bab 3 (bagian basis data), Bab 4 (bagian basis data), dan Lampiran G pada Laporan PBL Milestone 2. Isinya diambil dari file di folder `database/` dan dari hasil menjalankannya di PostgreSQL 17.11.
+
+## Status implementasi
+
+| Bagian | Status |
+|---|---|
+| Skema 14 tabel, data contoh, role aplikasi `photoops_si3_app`, database `photoops_si3_dev` | Sudah dibuat dan diuji |
+| Uji struktur, relasi, constraint, kueri, dan pola transaksi bersamaan (di PostgreSQL) | Sudah dijalankan, hasil di Bab 4 |
+| Aplikasi PHP memakai PostgreSQL | **Belum.** Semua modul, termasuk login, masih memakai data session (`$_SESSION['db']`). Kueri di `004_query_photoops.sql` baru disiapkan untuk integrasi |
+| Aturan yang dijaga aplikasi (bentrok jadwal unit, barang keluar sekali, kembali tidak melebihi keluar) | Pola transaksinya sudah diuji di PostgreSQL; **belum diuji end-to-end lewat PHP** |
+
+File utama di `database/`: `001_schema.sql` (struktur), `002_seed_demo.sql` (data contoh), `004_query_photoops.sql` (7 kueri operasional). File pendukung di `database/pendukung/`: `000_setup.sql` (admin membuat role dan database, sekali), `003_hak_akses.sql` (hak akses role aplikasi, dijalankan setelah 001 dan 002), dan `005_uji_integritas.sql` (uji). Urutan pemasangan: 000 → 001 → 002 → 003.
+
+---
+
+## Bab 2.3 Rancangan Basis Data
+
+### 2.3.1 PDM
+
+Basis data terdiri atas 14 tabel. Gambar 2.1 menampilkan tabel beserta kunci dan relasinya; versi Visual Paradigm disesuaikan dengan gambar ini.
+
+```mermaid
+erDiagram
+    pengguna ||--o{ proyek : "PIC (pic_id)"
+    pengguna ||--o{ anggota_proyek : "kru"
+    proyek ||--o{ anggota_proyek : "punya kru"
+    proyek ||--|| persiapan_proyek : "1:1"
+    proyek ||--o{ kebutuhan_proyek : "membutuhkan"
+    kategori_perlengkapan ||--o{ perlengkapan : "mengelompokkan"
+    kategori_perlengkapan ||--o{ kebutuhan_proyek : "kategori"
+    kategori_perlengkapan ||--o{ detail_preset : "kategori"
+    preset_perlengkapan ||--o{ detail_preset : "berisi"
+    kebutuhan_proyek ||--o{ alokasi_barang : "dipenuhi oleh"
+    perlengkapan |o--o{ alokasi_barang : "unit Studio"
+    pengguna |o--o{ alokasi_barang : "pemilik (Milik Kru)"
+    proyek ||--o{ transaksi_barang : "serah terima"
+    transaksi_barang ||--o{ detail_transaksi : "rincian"
+    alokasi_barang ||--o{ detail_transaksi : "barang"
+    perlengkapan ||--o{ laporan_insiden : "insiden unit"
+    proyek |o--o{ laporan_insiden : "terjadi di"
+    detail_transaksi |o--o| laporan_insiden : "dari pengembalian"
+    pengguna |o--o{ riwayat_aktivitas : "pelaku"
+```
+
+*Gambar 2.1 PDM PhotoOps (relasi utama; kolom lengkap ada di kamus data).*
+
+### 2.3.2 Relasi dan kardinalitas
+
+**Tabel 2.1** Relasi antartabel
+
+| Relasi | Kardinalitas | Kunci | Aturan hapus |
+|---|---|---|---|
+| pengguna → proyek (PIC) | 1 : N | `proyek.pic_id` | ditolak bila masih dirujuk |
+| proyek ↔ pengguna (Kru) lewat `anggota_proyek` | M : N | `proyek_id`, `pengguna_id`, UNIQUE berdua | hapus proyek → kru ikut terhapus |
+| proyek → persiapan_proyek | 1 : 1 | `persiapan_proyek.proyek_id` UNIQUE | ikut terhapus |
+| proyek → kebutuhan_proyek → alokasi_barang | 1 : N : N | `kebutuhan_id` | ikut terhapus (bila belum bertransaksi) |
+| kategori_perlengkapan → perlengkapan / kebutuhan / detail_preset | 1 : N | `kategori_id` | ditolak |
+| preset_perlengkapan → detail_preset | 1 : N | `preset_id` | ikut terhapus |
+| perlengkapan → alokasi_barang (khusus Studio) | 1 : N | `perlengkapan_id` (boleh kosong) | ditolak |
+| transaksi_barang ↔ alokasi_barang lewat `detail_transaksi` | M : N | `transaksi_id`, `alokasi_id` | ditolak |
+| proyek → transaksi_barang | 1 : N | `proyek_id` | ditolak (riwayat serah terima tidak boleh hilang) |
+| perlengkapan → laporan_insiden | 1 : N | `perlengkapan_id` wajib | ditolak |
+| proyek → laporan_insiden | 1 : N (opsional) | `proyek_id` | diisi kosong (SET NULL) |
+| detail_transaksi → laporan_insiden | 1 : 0..1 | `detail_id` UNIQUE | ditolak |
+
+Peran login (`sa`, `pi`, `us`) disimpan di `pengguna.peran`. PIC dan Kru adalah peran di dalam proyek, bukan peran login: PIC disimpan di `proyek.pic_id`, sedangkan Kru disimpan di `anggota_proyek`.
+
+### 2.3.3 Kamus data
+
+Tipe `INTEGER` dengan bawaan *identity* berarti nomor dibuat otomatis oleh PostgreSQL. Tanda "-" pada kolom Wajib berarti kolom boleh kosong (NULL).
+
+**Tabel 2.2** `pengguna`
+
+| Kolom | Tipe | Wajib | Bawaan | Batasan |
+|---|---|---|---|---|
+| id | INTEGER | Ya | identity | PK |
+| nama | VARCHAR(60) | Ya | - | - |
+| username | VARCHAR(30) | Ya | - | UNIQUE |
+| email | VARCHAR(80) | Ya | - | UNIQUE |
+| password_hash | VARCHAR(255) | Ya | - | - |
+| peran | VARCHAR(2) | Ya | - | CHECK peran IN ('sa', 'pi', 'us') |
+| jenis_anggota | VARCHAR(10) | Ya | 'Internal' | CHECK jenis_anggota IN ('Internal', 'Freelancer') |
+| telepon | VARCHAR(20) | Ya | '' | - |
+| status | VARCHAR(8) | Ya | 'Aktif' | CHECK status IN ('Aktif', 'Nonaktif') |
+
+**Tabel 2.3** `kategori_perlengkapan`
+
+| Kolom | Tipe | Wajib | Bawaan | Batasan |
+|---|---|---|---|---|
+| id | INTEGER | Ya | identity | PK |
+| nama | VARCHAR(50) | Ya | - | UNIQUE |
+| kode_awalan | VARCHAR(5) | Ya | - | UNIQUE |
+| deskripsi | VARCHAR(150) | Ya | '' | - |
+| nomor_terakhir | INTEGER | Ya | 0 | CHECK (nomor_terakhir >= 0) |
+
+**Tabel 2.4** `perlengkapan`
+
+| Kolom | Tipe | Wajib | Bawaan | Batasan |
+|---|---|---|---|---|
+| id | INTEGER | Ya | identity | PK |
+| kode_unit | VARCHAR(12) | Ya | - | UNIQUE |
+| nama | VARCHAR(60) | Ya | - | - |
+| merek | VARCHAR(30) | Ya | - | - |
+| kategori_id | INTEGER | Ya | - | FK → kategori_perlengkapan |
+| kondisi | VARCHAR(11) | Ya | 'Baik' | CHECK kondisi IN ('Baik', 'Maintenance', 'Rusak') |
+| status_aktif | VARCHAR(8) | Ya | 'Aktif' | CHECK status_aktif IN ('Aktif', 'Nonaktif') |
+| catatan | VARCHAR(120) | Ya | '' | - |
+
+**Tabel 2.5** `proyek`
+
+| Kolom | Tipe | Wajib | Bawaan | Batasan |
+|---|---|---|---|---|
+| id | INTEGER | Ya | identity | PK |
+| kode | VARCHAR(12) | Ya | - | UNIQUE |
+| nama | VARCHAR(80) | Ya | - | - |
+| klien | VARCHAR(80) | Ya | - | - |
+| lokasi | VARCHAR(80) | Ya | - | - |
+| mulai | TIMESTAMP | Ya | - | - |
+| selesai | TIMESTAMP | Ya | - | - |
+| deadline_persiapan | TIMESTAMP | Ya | - | - |
+| status | VARCHAR(11) | Ya | 'Draf' | CHECK status IN ('Draf', 'Dijadwalkan', 'Berlangsung', 'Selesai', 'Dibatalkan') |
+| pic_id | INTEGER | Ya | - | FK → pengguna |
+| catatan | VARCHAR(300) | Ya | '' | - |
+| dibuat_oleh | INTEGER | Ya | - | FK → pengguna |
+
+Batasan tingkat tabel:
+- `ck_proyek_jadwal`: CHECK (selesai >= mulai)
+- `ck_proyek_deadline`: CHECK (deadline_persiapan <= mulai)
+
+**Tabel 2.6** `anggota_proyek`
+
+| Kolom | Tipe | Wajib | Bawaan | Batasan |
+|---|---|---|---|---|
+| id | INTEGER | Ya | identity | PK |
+| proyek_id | INTEGER | Ya | - | FK → proyek (CASCADE) |
+| pengguna_id | INTEGER | Ya | - | FK → pengguna |
+
+Batasan tingkat tabel:
+- `anggota_proyek_proyek_id_pengguna_id_key`: UNIQUE (proyek_id, pengguna_id)
+
+**Tabel 2.7** `preset_perlengkapan`
+
+| Kolom | Tipe | Wajib | Bawaan | Batasan |
+|---|---|---|---|---|
+| id | INTEGER | Ya | identity | PK |
+| nama | VARCHAR(50) | Ya | - | UNIQUE |
+| deskripsi | VARCHAR(160) | Ya | '' | - |
+| dibuat_oleh | INTEGER | Ya | - | FK → pengguna |
+| diubah_pada | TIMESTAMP | Ya | - | - |
+
+**Tabel 2.8** `detail_preset`
+
+| Kolom | Tipe | Wajib | Bawaan | Batasan |
+|---|---|---|---|---|
+| id | INTEGER | Ya | identity | PK |
+| preset_id | INTEGER | Ya | - | FK → preset_perlengkapan (CASCADE) |
+| nama_perlengkapan | VARCHAR(60) | Ya | - | - |
+| kategori_id | INTEGER | Ya | - | FK → kategori_perlengkapan |
+| jumlah | INTEGER | Ya | - | CHECK (jumlah >= 1) AND (jumlah <= 20) |
+
+Batasan tingkat tabel:
+- `detail_preset_preset_id_nama_perlengkapan_key`: UNIQUE (preset_id, nama_perlengkapan)
+
+**Tabel 2.9** `kebutuhan_proyek`
+
+| Kolom | Tipe | Wajib | Bawaan | Batasan |
+|---|---|---|---|---|
+| id | INTEGER | Ya | identity | PK |
+| proyek_id | INTEGER | Ya | - | FK → proyek (CASCADE) |
+| nama | VARCHAR(60) | Ya | - | - |
+| acuan | VARCHAR(60) | Ya | '' | - |
+| kategori_id | INTEGER | Ya | - | FK → kategori_perlengkapan |
+| jumlah | INTEGER | Ya | - | CHECK (jumlah >= 1) AND (jumlah <= 50) |
+
+**Tabel 2.10** `alokasi_barang`
+
+| Kolom | Tipe | Wajib | Bawaan | Batasan |
+|---|---|---|---|---|
+| id | INTEGER | Ya | identity | PK |
+| kebutuhan_id | INTEGER | Ya | - | FK → kebutuhan_proyek (CASCADE) |
+| sumber | VARCHAR(9) | Ya | - | CHECK sumber IN ('Studio', 'Rental', 'Milik Kru') |
+| perlengkapan_id | INTEGER | - | - | FK → perlengkapan |
+| nama_barang | VARCHAR(60) | Ya | '' | - |
+| vendor | VARCHAR(60) | Ya | '' | - |
+| pemilik_id | INTEGER | - | - | FK → pengguna |
+| jumlah | INTEGER | Ya | 1 | CHECK (jumlah >= 1) |
+| tgl_mulai | DATE | Ya | - | - |
+| tgl_selesai | DATE | Ya | - | - |
+| status | VARCHAR(12) | Ya | 'Dikonfirmasi' | CHECK status IN ('Direncanakan', 'Dikonfirmasi', 'Dibatalkan') |
+| catatan | VARCHAR(120) | Ya | '' | - |
+| diperiksa | BOOLEAN | Ya | FALSE | - |
+| diterima_pada | TIMESTAMP | - | - | - |
+| diterima_oleh | INTEGER | - | - | FK → pengguna |
+| kondisi_terima | VARCHAR(11) | - | - | CHECK kondisi_terima IN ('Baik', 'Maintenance', 'Rusak') |
+| catatan_terima | VARCHAR(120) | Ya | '' | - |
+| sewa_mulai | DATE | - | - | - |
+| jatuh_tempo_vendor | DATE | - | - | - |
+| kontak_vendor | VARCHAR(60) | Ya | '' | - |
+| dikembalikan_vendor_pada | TIMESTAMP | - | - | - |
+| dikembalikan_vendor_oleh | INTEGER | - | - | FK → pengguna |
+| kondisi_kembali_vendor | VARCHAR(11) | - | - | CHECK kondisi_kembali_vendor IN ('Baik', 'Maintenance', 'Rusak') |
+| catatan_kembali_vendor | VARCHAR(120) | Ya | '' | - |
+
+Batasan tingkat tabel:
+- `ck_alokasi_tanggal`: CHECK (tgl_selesai >= tgl_mulai)
+- `ck_alokasi_sumber`: CHECK: Studio wajib perlengkapan_id dan jumlah = 1; Rental wajib nama_barang dan vendor; Milik Kru wajib nama_barang dan pemilik_id
+- `ck_alokasi_diperiksa`: CHECK (diperiksa = FALSE OR status = 'Dikonfirmasi')
+- `ck_alokasi_kembali_vendor`: CHECK (dikembalikan_vendor_pada IS NULL OR (diterima_pada IS NOT NULL AND dikembalikan_vendor_pada >= diterima_pada))
+- `ck_alokasi_masa_sewa`: CHECK (jatuh_tempo_vendor IS NULL OR sewa_mulai IS NULL OR jatuh_tempo_vendor >= sewa_mulai)
+
+**Tabel 2.11** `persiapan_proyek`
+
+| Kolom | Tipe | Wajib | Bawaan | Batasan |
+|---|---|---|---|---|
+| id | INTEGER | Ya | identity | PK |
+| proyek_id | INTEGER | Ya | - | UNIQUE; FK → proyek (CASCADE) |
+| diperbarui_pada | TIMESTAMP | - | - | - |
+| diperbarui_oleh | INTEGER | - | - | FK → pengguna |
+| dikonfirmasi_pada | TIMESTAMP | - | - | - |
+| dikonfirmasi_oleh | INTEGER | - | - | FK → pengguna |
+| batal_pada | TIMESTAMP | - | - | - |
+| batal_oleh | INTEGER | - | - | FK → pengguna |
+| batal_otomatis | BOOLEAN | - | - | - |
+| batal_alasan | TEXT | Ya | ''::text | - |
+| batal_konfirmasi_pada | TIMESTAMP | - | - | - |
+| batal_konfirmasi_oleh | INTEGER | - | - | FK → pengguna |
+
+**Tabel 2.12** `transaksi_barang`
+
+| Kolom | Tipe | Wajib | Bawaan | Batasan |
+|---|---|---|---|---|
+| id | INTEGER | Ya | identity | PK |
+| kode | VARCHAR(12) | Ya | - | UNIQUE |
+| proyek_id | INTEGER | Ya | - | FK → proyek |
+| jenis | VARCHAR(7) | Ya | - | CHECK jenis IN ('Keluar', 'Kembali') |
+| waktu | TIMESTAMP | Ya | - | - |
+| petugas_id | INTEGER | Ya | - | FK → pengguna |
+| penerima | VARCHAR(60) | Ya | '' | - |
+| penerima_id | INTEGER | - | - | FK → pengguna |
+| penyerah | VARCHAR(60) | Ya | '' | - |
+| penyerah_id | INTEGER | - | - | FK → pengguna |
+| catatan | VARCHAR(300) | Ya | '' | - |
+| dicatat_pada | TIMESTAMP | - | - | - |
+
+**Tabel 2.13** `detail_transaksi`
+
+| Kolom | Tipe | Wajib | Bawaan | Batasan |
+|---|---|---|---|---|
+| id | INTEGER | Ya | identity | PK |
+| transaksi_id | INTEGER | Ya | - | FK → transaksi_barang |
+| alokasi_id | INTEGER | Ya | - | FK → alokasi_barang |
+| kondisi | VARCHAR(11) | Ya | 'Baik' | CHECK kondisi IN ('Baik', 'Maintenance', 'Rusak') |
+| jumlah | INTEGER | Ya | 1 | CHECK (jumlah >= 1) |
+
+Batasan tingkat tabel:
+- `detail_transaksi_transaksi_id_alokasi_id_kondisi_key`: UNIQUE (transaksi_id, alokasi_id, kondisi)
+
+**Tabel 2.14** `laporan_insiden`
+
+| Kolom | Tipe | Wajib | Bawaan | Batasan |
+|---|---|---|---|---|
+| id | INTEGER | Ya | identity | PK |
+| kode | VARCHAR(12) | Ya | - | UNIQUE |
+| perlengkapan_id | INTEGER | Ya | - | FK → perlengkapan |
+| proyek_id | INTEGER | - | - | FK → proyek (SET NULL) |
+| detail_id | INTEGER | - | - | UNIQUE; FK → detail_transaksi |
+| jenis | VARCHAR(14) | Ya | - | CHECK jenis IN ('Rusak', 'Masalah Teknis') |
+| waktu | TIMESTAMP | Ya | - | - |
+| deskripsi | TEXT | Ya | - | - |
+| status | VARCHAR(10) | Ya | 'Dilaporkan' | CHECK status IN ('Dilaporkan', 'Ditangani', 'Selesai') |
+| pelapor_id | INTEGER | Ya | - | FK → pengguna |
+
+**Tabel 2.15** `riwayat_aktivitas`
+
+| Kolom | Tipe | Wajib | Bawaan | Batasan |
+|---|---|---|---|---|
+| id | INTEGER | Ya | identity | PK |
+| waktu | TIMESTAMP | Ya | - | - |
+| pengguna_id | INTEGER | - | - | FK → pengguna |
+| aksi | VARCHAR(20) | Ya | - | CHECK aksi IN ('Barang Keluar', 'Pengembalian', 'Insiden', 'Alokasi', 'Rental', 'Persiapan', 'Proyek', 'Kebutuhan', 'Tim', 'Preset', 'Perlengkapan', 'Pengguna') |
+| objek | VARCHAR(200) | Ya | '' | - |
+| keterangan | TEXT | Ya | ''::text | - |
+| lama | VARCHAR(200) | Ya | '' | - |
+| baru | VARCHAR(200) | Ya | '' | - |
+
+### 2.3.4 Normalisasi
+
+- **1NF.** Setiap kolom berisi satu nilai. Contohnya, centang checklist yang di prototipe disimpan sebagai daftar ID dalam satu baris persiapan, kini menjadi kolom `diperiksa` per baris `alokasi_barang`.
+- **2NF.** Setiap tabel memakai kunci tunggal `id`, sehingga tidak ada kolom yang hanya bergantung pada sebagian kunci. Pasangan unik seperti `(proyek_id, pengguna_id)` dijaga dengan UNIQUE.
+- **3NF.** Kolom yang bisa diturunkan dari tabel lain tidak disimpan ulang:
+  - `alokasi_barang` tidak menyimpan `proyek_id`, karena proyeknya diketahui lewat `kebutuhan_id`;
+  - `detail_transaksi` tidak menyimpan jenis transaksi atau transaksi asal, karena keduanya diketahui lewat `transaksi_id` dan alokasinya;
+  - nama PIC tidak disimpan di proyek, cukup `pic_id`.
+- **Atribut turunan tidak disimpan.** Sisa barang di luar, status pemakaian unit (Tersedia/Dipinjam/Tidak Tersedia), progres checklist, ketepatan waktu persiapan, dan status sewa dihitung dengan kueri atau view saat dibutuhkan.
+- **Data histori yang sengaja disimpan.** `transaksi_barang.penerima`/`penyerah` menyimpan nama saat serah terima terjadi, dan `persiapan_proyek.batal_*` menyimpan pembatalan konfirmasi terakhir. Keduanya mencatat keadaan di masa lalu, sehingga tidak boleh ikut berubah ketika data akun diubah.
+
+### 2.3.5 Aturan integritas
+
+**Tabel 2.16** Pembagian penjagaan aturan bisnis
+
+| Aturan | Dijaga oleh | Cara |
+|---|---|---|
+| Peran login hanya sa/pi/us; status, kondisi, sumber, jenis hanya nilai yang diizinkan | Database | CHECK |
+| Username, email, kode proyek/transaksi/insiden/unit tidak ganda | Database | UNIQUE |
+| Satu persiapan per proyek | Database | UNIQUE `proyek_id` |
+| Studio wajib unit dan jumlah 1; Rental wajib vendor; Milik Kru wajib pemilik | Database | `ck_alokasi_sumber` |
+| Insiden formal hanya untuk unit Studio | Database | `laporan_insiden.perlengkapan_id` NOT NULL |
+| Proyek yang sudah bertransaksi, unit yang pernah dipakai, dan pengguna yang dirujuk tidak bisa dihapus | Database | FOREIGN KEY |
+| Riwayat serah terima dan log tidak bisa diubah/dihapus aplikasi | Database | Hak akses role `photoops_si3_app` |
+| Unit Studio tidak boleh dipakai dua proyek pada jadwal yang beririsan | Aplikasi (dalam transaksi) | kunci baris unit + kueri Q7 |
+| Satu alokasi hanya keluar satu kali | Aplikasi (dalam transaksi) | kunci baris alokasi + cek alokasi sudah ada di `v_saldo_alokasi` |
+| Jumlah kembali tidak melebihi jumlah keluar | Aplikasi (dalam transaksi) | kunci baris alokasi + sisa dari `v_saldo_alokasi` (lihat Q4) |
+| PIC dan Kru adalah pengguna `us` yang aktif; pemilik Milik Kru adalah anggota proyek | Aplikasi | validasi sebelum simpan |
+
+Tiga aturan bertanda "Aplikasi (dalam transaksi)" melibatkan banyak baris sekaligus, sehingga tidak bisa ditulis sebagai CHECK. Aturan itu tidak cukup dicek dengan `if` biasa di PHP: bila dua petugas menyimpan bersamaan, keduanya bisa lolos. Karena itu aplikasi harus membuka transaksi, mengunci baris dengan `SELECT ... FOR UPDATE`, baru memeriksa dan menyimpan. Bab 4 menunjukkan uji dua sesi untuk pola ini.
+
+---
+
+## Bab 3 Implementasi (bagian basis data)
+
+### 3.1 Teknologi
+
+- PostgreSQL 17.11 dengan psql sebagai alat menjalankan skrip.
+- Role `photoops_si3_app` untuk aplikasi (bukan superuser), database `photoops_si3_dev`.
+- PHP 8.4 dengan PDO driver `pgsql` direncanakan untuk menghubungkan aplikasi (belum dipasang di aplikasi).
+
+### 3.3 Basis data
+
+**Pembuatan database.** `database/pendukung/000_setup.sql` dijalankan oleh admin untuk membuat role dan database. Sesudah itu `001_schema.sql` membuat tabel, `002_seed_demo.sql` mengisi data contoh, dan `003_hak_akses.sql` memberi hak minimum kepada role aplikasi:
+- role aplikasi boleh menambah dan membaca transaksi serta log, tetapi tidak boleh mengubah atau menghapusnya;
+- akun pengguna hanya bisa dihapus bila belum dirujuk data lain (ditolak FOREIGN KEY tanpa CASCADE); akun yang sudah dipakai cukup dinonaktifkan;
+- password role tidak ditulis di file mana pun yang masuk Git.
+
+**Contoh CREATE TABLE.** Tabel `alokasi_barang` (Kode 3.1) menunjukkan cara satu tabel menampung tiga sumber barang dengan satu CHECK.
+
+```sql
+CREATE TABLE alokasi_barang (
+    id               INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    kebutuhan_id     INTEGER     NOT NULL REFERENCES kebutuhan_proyek (id) ON DELETE CASCADE,
+    sumber           VARCHAR(9)  NOT NULL CHECK (sumber IN ('Studio', 'Rental', 'Milik Kru')),
+    perlengkapan_id  INTEGER     REFERENCES perlengkapan (id),
+    nama_barang      VARCHAR(60) NOT NULL DEFAULT '',
+    vendor           VARCHAR(60) NOT NULL DEFAULT '',
+    pemilik_id       INTEGER     REFERENCES pengguna (id),
+    jumlah           INTEGER     NOT NULL DEFAULT 1 CHECK (jumlah >= 1),
+    -- ... kolom jadwal, status, checklist, dan siklus vendor (lihat 001_schema.sql)
+    CONSTRAINT ck_alokasi_sumber CHECK (
+           (sumber = 'Studio'    AND perlengkapan_id IS NOT NULL AND jumlah = 1)
+        OR (sumber = 'Rental'    AND perlengkapan_id IS NULL AND nama_barang <> '' AND vendor <> '')
+        OR (sumber = 'Milik Kru' AND perlengkapan_id IS NULL AND nama_barang <> '' AND pemilik_id IS NOT NULL)
+    )
+);
+```
+
+*Kode 3.1 Potongan tabel alokasi_barang.*
+
+**Data uji.** Data contoh berasal dari data prototipe, ditambah sedikit data dummy untuk pengujian: siklus rental, dua konfirmasi persiapan (tepat waktu dan terlambat), serta satu pengembalian sebagian.
+
+| Tabel | Baris | Tabel | Baris |
+|---|---|---|---|
+| pengguna | 7 | alokasi_barang | 41 |
+| kategori_perlengkapan | 5 | persiapan_proyek | 10 |
+| perlengkapan | 23 | transaksi_barang | 13 |
+| proyek | 10 | detail_transaksi | 44 |
+| anggota_proyek | 10 | laporan_insiden | 3 |
+| preset_perlengkapan | 4 | riwayat_aktivitas | 21 |
+| detail_preset | 21 | kebutuhan_proyek | 29 |
+
+**Kueri utama.** Kueri yang disiapkan untuk fitur dicatat di Lampiran G; contoh CRUD, JOIN, agregasi, view, dan transaksi ada di G.3.
+
+**Cara kerja PHP setelah integrasi (rencana).** Setiap modul memanggil satu koneksi PDO dengan prepared statement, sehingga input pengguna tidak pernah digabung langsung ke teks SQL. Untuk aturan yang melibatkan banyak baris, PHP menjalankan langkah dalam satu transaksi (Kode 3.2).
+
+```php
+$pdo->beginTransaction();
+$pdo->prepare('SELECT id FROM alokasi_barang WHERE id = :id FOR UPDATE')->execute(['id' => $alokasi_id]);
+$sisa = $pdo->prepare('SELECT sisa FROM v_saldo_alokasi WHERE alokasi_id = :id');
+$sisa->execute(['id' => $alokasi_id]);
+if ($jumlah > (int) $sisa->fetchColumn()) {
+    $pdo->rollBack();          // ditolak: kembali melebihi sisa
+} else {
+    // INSERT transaksi_barang dan detail_transaksi ...
+    $pdo->commit();
+}
+```
+
+*Kode 3.2 Rencana pola transaksi pengembalian di PHP (belum dipasang di aplikasi).*
+
+---
+
+## Bab 4 Pengujian dan Evaluasi (bagian basis data)
+
+### 4.1 Rencana pengujian
+
+| Jenis uji | Alat | Berkas |
+|---|---|---|
+| Koneksi dan hak role aplikasi | PHP CLI + PDO | `tests/cek_koneksi_db.php` |
+| Struktur, data contoh, relasi, constraint, aturan hapus | psql | `database/pendukung/005_uji_integritas.sql` |
+| Kueri operasional (dijalankan sebagai role aplikasi) | psql | `database/004_query_photoops.sql` |
+| Dua petugas mengembalikan barang yang sama bersamaan | dua sesi psql | skrip uji konkurensi (scratchpad) |
+| Kinerja kueri | `EXPLAIN (ANALYZE, BUFFERS)` | Lampiran G.4 |
+
+### 4.2 Kasus uji dan hasil
+
+**Tabel 4.1** Kasus uji basis data (ringkasan; daftar lengkap 56 pemeriksaan ada di `database/pendukung/005_uji_integritas.sql`)
+
+| ID | Skenario | Langkah singkat | Hasil diharapkan | Hasil aktual | Status |
+|---|---|---|---|---|---|
+| TC-DB-01 | Koneksi role aplikasi | `php tests/cek_koneksi_db.php` | Terhubung sebagai `photoops_si3_app`, bukan superuser | 6/6 pemeriksaan lulus | Lulus |
+| TC-DB-02 | Struktur | Hitung tabel, view, function/trigger | 14 tabel, 1 view, 0 function/trigger | Sesuai | Lulus |
+| TC-DB-03 | Data contoh | Hitung baris tiap tabel | Sesuai tabel data uji | Sesuai | Lulus |
+| TC-DB-04 | Relasi 1:1 persiapan | Setiap proyek punya tepat satu persiapan; tambah persiapan kedua | Data konsisten; tambahan ditolak | Ditolak `persiapan_proyek_proyek_id_key` | Lulus |
+| TC-DB-05 | Peran login | Ubah peran menjadi `xx` | Ditolak | Ditolak `pengguna_peran_check` | Lulus |
+| TC-DB-06 | Username/email ganda | Tambah akun dengan username/email yang sudah ada | Ditolak | Ditolak `uq_pengguna_username`, `uq_pengguna_email` | Lulus |
+| TC-DB-07 | Alokasi tiga sumber | Studio tanpa unit, Studio jumlah 2, Rental tanpa vendor, Milik Kru tanpa pemilik | Semua ditolak | Ditolak `ck_alokasi_sumber` (4×) | Lulus |
+| TC-DB-08 | Jadwal dan deadline proyek | Selesai sebelum mulai; deadline setelah mulai | Ditolak | Ditolak `ck_proyek_jadwal`, `ck_proyek_deadline` | Lulus |
+| TC-DB-09 | Siklus rental | Kembali ke vendor sebelum diterima; jatuh tempo sebelum sewa mulai | Ditolak | Ditolak `ck_alokasi_kembali_vendor`, `ck_alokasi_masa_sewa` | Lulus |
+| TC-DB-10 | Insiden khusus Studio | Insiden tanpa unit | Ditolak | Ditolak (NOT NULL `perlengkapan_id`) | Lulus |
+| TC-DB-11 | Hapus data yang dirujuk | Hapus proyek bertransaksi, pengguna, unit, alokasi bertransaksi | Ditolak | Ditolak FOREIGN KEY (4×) | Lulus |
+| TC-DB-12 | Hapus berantai | Hapus proyek tanpa transaksi; hapus preset; hapus proyek yang punya insiden | Anak ikut terhapus; insiden tetap dengan proyek kosong | Sesuai (CASCADE, SET NULL) | Lulus |
+| TC-DB-13 | Saldo barang | Bandingkan view dengan data | Keluar 25, kembali 20, sisa di alokasi 8, 25, 26, 27, 41 | Sesuai | Lulus |
+| TC-DB-14 | Pengembalian sebagian | Alokasi 41: keluar 2, kembali 1, lalu kembali 1 lagi | Kembali Sebagian → Sudah Kembali, sisa tidak minus | Sesuai | Lulus |
+| TC-DB-15 | Cek bentrok jadwal unit | CAM-001 untuk 7–8 Nov dan 11–12 Nov | 7–8 Nov bentrok dengan PRJ-021; 11–12 Nov kosong | Sesuai | Lulus |
+| TC-DB-16 | Dua petugas bersamaan (dengan kunci) | Sesi A mengembalikan sisa terakhir; sesi B mencoba hal yang sama | B menunggu A, lalu membaca sisa 0 | B menunggu ±2 detik, sisa 0, sisa akhir 0 | Lulus |
+| TC-DB-17 | Pembanding tanpa kunci | Skenario sama tanpa `FOR UPDATE` | Menunjukkan risiko | B membaca sisa 1 saat A belum selesai | Lulus (risiko terbukti) |
+| TC-DB-18 | Hak akses minimum | Periksa hak role aplikasi | Tidak bisa UPDATE/DELETE transaksi dan log, tidak bisa hapus pengguna | Sesuai | Lulus |
+| TC-DB-19 | Kueri operasional | Jalankan 7 kueri `004` sebagai role aplikasi | Tanpa error | 0 error; Q1 10, Q2 23, Q3 1, Q4 5, Q5 0, Q6 20, Q7 0 baris | Lulus |
+
+**Catatan batas pengujian.**
+- TC-DB-15 sampai TC-DB-17 menguji kueri dan pola transaksinya di PostgreSQL.
+- Penerapannya di PHP baru diuji setelah modul Alokasi dan Serah Terima dimigrasikan.
+
+### 4.3 Bug
+
+Tidak ada bug basis data yang tersisa. Selama penyusunan, nama otomatis CHECK tingkat tabel (misalnya `alokasi_barang_check1`) diganti menjadi nama yang jelas (`ck_alokasi_sumber`, dan seterusnya) agar pesan galat mudah dipahami.
+
+### Uji kueri
+
+Hasil `EXPLAIN ANALYZE` ada di Lampiran G.4.
+
+---
+
+## Lampiran G. Dokumentasi Kueri Basis Data
+
+### G.1 Skema dan indeks
+
+Skema lengkap ada di `database/001_schema.sql` dan sama dengan kamus data di Bab 2.3. Ringkasan objeknya:
+- 14 tabel, 124 kolom, 14 PRIMARY KEY, 31 FOREIGN KEY, 14 UNIQUE, dan 27 CHECK;
+- 3 sequence kode dokumen (`seq_kode_proyek`, `seq_kode_transaksi`, `seq_kode_insiden`);
+- 1 view (`v_saldo_alokasi`);
+- tanpa function dan trigger buatan sendiri.
+
+Indeks tambahan selain PK dan UNIQUE:
+
+```sql
+CREATE INDEX idx_kebutuhan_proyek     ON kebutuhan_proyek (proyek_id);
+CREATE INDEX idx_alokasi_kebutuhan    ON alokasi_barang (kebutuhan_id);
+CREATE INDEX idx_alokasi_perlengkapan ON alokasi_barang (perlengkapan_id);
+CREATE INDEX idx_detail_alokasi       ON detail_transaksi (alokasi_id);
+CREATE INDEX idx_transaksi_proyek     ON transaksi_barang (proyek_id);
+CREATE INDEX idx_riwayat_waktu        ON riwayat_aktivitas (waktu);
+```
+
+Setiap indeks dipasang pada kolom yang sering dipakai untuk JOIN atau filter, misalnya mencari kebutuhan suatu proyek atau alokasi sebuah unit. PostgreSQL tidak membuat indeks untuk FOREIGN KEY secara otomatis.
+
+### G.2 Daftar kueri
+
+**Tabel G.1** Kueri operasional pada `004_query_photoops.sql`
+
+| No | Fungsi di aplikasi | Tabel yang dipakai | Jenis |
+|---|---|---|---|
+| Q1 | Daftar proyek beserta PIC | proyek, pengguna | Tampil (JOIN) |
+| Q2 | Perlengkapan Studio beserta kategorinya | perlengkapan, kategori_perlengkapan | Tampil (JOIN) |
+| Q3 | Kebutuhan proyek aktif yang belum terpenuhi | kebutuhan_proyek, proyek, alokasi_barang | Hitung (SUM, GROUP BY, HAVING) |
+| Q4 | Barang yang belum kembali dari proyek | v_saldo_alokasi, alokasi_barang, proyek, perlengkapan | Tampil (view) |
+| Q5 | Rental yang melewati jatuh tempo vendor | alokasi_barang, kebutuhan_proyek, proyek | Tampil (operasi tanggal) |
+| Q6 | Riwayat aktivitas terbaru | riwayat_aktivitas, pengguna | Tampil (LEFT JOIN) |
+| Q7 | Cek bentrok jadwal unit Studio sebelum dialokasikan | alokasi_barang, kebutuhan_proyek, proyek, v_saldo_alokasi | Tampil (subquery) |
+
+### G.3 Kueri dan fungsinya
+
+**Q1. Daftar proyek beserta PIC.** JOIN menghubungkan `proyek.pic_id` dengan `pengguna.id`, sehingga nama PIC tidak perlu disimpan berulang di tabel proyek.
+
+```sql
+SELECT p.kode, p.nama, p.status, p.mulai, pic.nama AS pic
+FROM proyek p
+JOIN pengguna pic ON pic.id = p.pic_id
+ORDER BY p.mulai DESC;
+```
+
+Hasil: 10 baris, misalnya `PRJ-021 | Wedding Arunika & Dimas | Dijadwalkan | Rizky Pratama`.
+
+**Q3. Kebutuhan proyek aktif yang belum terpenuhi.**
+- SUM menjumlahkan barang yang sudah dialokasikan untuk tiap kebutuhan.
+- Syarat `status <> 'Dibatalkan'` ditaruh di `ON`, bukan di `WHERE`, supaya kebutuhan yang belum punya alokasi tetap tampil dengan nilai 0.
+- `WHERE` memilih proyek yang masih aktif sebelum dikelompokkan, lalu `HAVING` menyaring kebutuhan yang jumlahnya masih kurang.
+
+```sql
+SELECT p.kode, k.nama AS kebutuhan, k.jumlah AS dibutuhkan,
+       COALESCE(SUM(a.jumlah), 0) AS dialokasikan
+FROM kebutuhan_proyek k
+JOIN proyek p              ON p.id = k.proyek_id
+LEFT JOIN alokasi_barang a ON a.kebutuhan_id = k.id
+                          AND a.status <> 'Dibatalkan'
+WHERE p.status NOT IN ('Selesai', 'Dibatalkan')
+GROUP BY p.kode, k.id, k.nama, k.jumlah
+HAVING COALESCE(SUM(a.jumlah), 0) < k.jumlah
+ORDER BY p.kode;
+```
+
+Hasil: 1 baris, `PRJ-021 | Lighting LED | 1 | 0`. Satu-satunya alokasi untuk kebutuhan itu (LGT-001) dibatalkan karena unitnya masuk maintenance.
+
+**Q4. Barang yang belum kembali.** Sisa barang di luar tidak disimpan sebagai kolom karena selalu bisa dihitung dari transaksi. View `v_saldo_alokasi` melakukan perhitungan itu dalam tiga langkah (CTE):
+1. `keluar` mengambil barang yang keluar per alokasi;
+2. `kembali` menjumlahkan barang yang sudah kembali per alokasi;
+3. keduanya digabung, dan `sisa = jumlah_keluar - jumlah_kembali`.
+
+Q4 cukup membaca view itu.
+
+```sql
+SELECT p.kode AS proyek, COALESCE(pl.kode_unit, a.nama_barang) AS barang,
+       s.jumlah_keluar, s.jumlah_kembali, s.sisa, s.status_kembali
+FROM v_saldo_alokasi s
+JOIN alokasi_barang a     ON a.id = s.alokasi_id
+JOIN proyek p             ON p.id = s.proyek_id
+LEFT JOIN perlengkapan pl ON pl.id = a.perlengkapan_id
+WHERE s.sisa > 0
+ORDER BY p.kode;
+```
+
+| proyek | barang | keluar | kembali | sisa | status_kembali |
+|---|---|---|---|---|---|
+| PRJ-020 | CAM-003 | 1 | 0 | 1 | Belum Kembali |
+| PRJ-025 | LGT-002 | 1 | 0 | 1 | Belum Kembali |
+| PRJ-025 | LGT-003 | 1 | 0 | 1 | Belum Kembali |
+| PRJ-025 | CAM-005 | 1 | 0 | 1 | Belum Kembali |
+| PRJ-025 | SD Card 64GB ×2 | 2 | 1 | 1 | Kembali Sebagian |
+
+Saat mencatat pengembalian, PHP membaca sisa dari view yang sama setelah mengunci baris alokasi (`FOR UPDATE`). Pengembalian hanya disimpan bila jumlahnya ≤ sisa.
+
+**Q5. Rental yang melewati jatuh tempo vendor.** Selisih dua nilai `DATE` menghasilkan jumlah hari keterlambatan. Per 2026-11-07 hasilnya kosong. Dengan tanggal 2026-11-10, hasilnya Sony FX3 PRJ-020 (jatuh tempo 2026-11-09), terlambat 1 hari.
+
+**Q7. Cek bentrok jadwal unit Studio.** Dua rentang tanggal beririsan bila `mulai_lama <= selesai_baru` dan `selesai_lama >= mulai_baru`. Alokasi yang dibatalkan atau barangnya sudah kembali penuh diabaikan. Hasil kosong berarti unit boleh dialokasikan; pada contoh, CAM-001 untuk 11–12 Nov kosong. PHP menjalankan kueri ini di dalam transaksi setelah mengunci baris unit, agar dua petugas tidak mengalokasikan unit yang sama bersamaan.
+
+### G.4 Pengujian dengan EXPLAIN ANALYZE
+
+Dijalankan di `photoops_si3_dev`, PostgreSQL 17.11, dengan data contoh, dengan menambahkan `EXPLAIN (ANALYZE, BUFFERS)` di depan kueri.
+
+**Tabel G.2** Hasil EXPLAIN (ANALYZE, BUFFERS)
+
+| Kueri | Jumlah baris data uji | Jenis scan | Execution time | Catatan |
+|---|---|---|---|---|
+| Q1 Daftar proyek + PIC | proyek 10, pengguna 7 | Seq Scan + Hash Join | 0,136 ms | Tabel kecil, Seq Scan paling murah |
+| Q3 Kebutuhan belum terpenuhi | kebutuhan 29, alokasi 41 | Seq Scan + HashAggregate | 0,377 ms | Cukup untuk ukuran data sekarang |
+| Q4 Barang belum kembali | detail 44, transaksi 13 | Index Scan (PK) + Bitmap Index Scan (UNIQUE detail) | 0,539 ms | Indeks dipakai saat mencocokkan detail dengan transaksi |
+
+Cara membaca hasilnya:
+- **Seq Scan:** membaca semua baris tabel. Pada tabel kecil seperti ini justru paling cepat, sehingga PostgreSQL memilihnya walaupun ada indeks.
+- **Index Scan / Bitmap Index Scan:** memakai indeks untuk langsung menuju baris yang dicari.
+- **Execution time:** waktu nyata kueri dijalankan. Angkanya sedikit berbeda di setiap run.
+
+Pengujian dengan data besar (misalnya 10.000 baris) belum dilakukan. Tangkapan layar untuk laporan diambil dari psql atau pgAdmin masing-masing.
+
+---
+
+## Konsep SQL yang perlu dikuasai tim
+
+1. **`CREATE TABLE` dan tipe data:**
+   - `INTEGER`, `VARCHAR(n)`, `TEXT`, `BOOLEAN`, `DATE`, `TIMESTAMP`;
+   - `GENERATED BY DEFAULT AS IDENTITY` sebagai pembuat nomor otomatis, padanan standar SQL dari `SERIAL`.
+2. **PRIMARY KEY, FOREIGN KEY (`REFERENCES`), dan aturan hapus:**
+   - bawaan: ditolak bila masih dirujuk;
+   - `ON DELETE CASCADE`;
+   - `ON DELETE SET NULL`.
+3. **NOT NULL, UNIQUE (termasuk UNIQUE dua kolom), DEFAULT, dan CHECK:** CHECK satu kolom dan CHECK antar kolom seperti `ck_alokasi_sumber`.
+4. **Relasi 1:1, 1:N, dan M:N:** tabel penghubung `anggota_proyek` dan `detail_transaksi`.
+5. **Normalisasi 1NF–3NF:** alasan atribut turunan tidak disimpan, dan alasan snapshot nama tetap disimpan.
+6. **SELECT dengan klausa dasar:** WHERE, ORDER BY, LIMIT.
+7. **Penggabungan tabel:** INNER JOIN, LEFT JOIN, UNION ALL.
+8. **Pengelompokan:** GROUP BY dengan COUNT/SUM/MAX, beserta beda WHERE dan HAVING.
+9. **Fungsi dan ekspresi:** CASE WHEN, COALESCE, operasi tanggal.
+10. **Subquery dan VIEW:** subquery dengan EXISTS, VIEW, dan CTE (`WITH`).
+11. **INSERT, UPDATE, DELETE:** termasuk `RETURNING`.
+12. **Transaksi:** BEGIN/COMMIT/ROLLBACK, dan `SELECT ... FOR UPDATE` untuk mencegah dua petugas mengubah data yang sama bersamaan.
+13. **Sequence (`nextval`):** untuk kode dokumen.
+14. **Hak akses (`GRANT`):** alasan aplikasi tidak memakai akun `postgres`.
+15. **Prepared statement PDO:** pencegahan SQL injection.
+16. **`EXPLAIN ANALYZE`:** cara membaca Seq Scan dan Index Scan.

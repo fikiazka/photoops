@@ -9,7 +9,11 @@ if (is_post()) {
     if ($aksi === 'simpan_unit') {
         wajib_boleh('perlengkapan.kelola');
         $id = (int) input('id');
-        $lama_u = $id ? db_cari('perlengkapan', $id) : null;
+        $lama_u = $id ? cari_perlengkapan($id) : null;
+        if ($id && !$lama_u) {
+            flash('error', 'Unit tidak ditemukan.');
+            muat_ulang();
+        }
         $data = [
             'id' => $id ?: '',
             'kategori_id' => $lama_u ? (string) $lama_u['kategori_id'] : input('kategori_id'),
@@ -25,32 +29,37 @@ if (is_post()) {
             muat_ulang();
         }
         $isi = ['nama' => $data['nama'], 'merek' => $data['merek'], 'kondisi' => $data['kondisi'], 'status_aktif' => $data['status_aktif'], 'catatan' => $data['catatan']];
-        if ($lama_u) {
-            db_ubah('perlengkapan', $id, $isi);
-            $ganti = $lama_u['kondisi'] !== $isi['kondisi'];
-            catat_riwayat('Perlengkapan', label_unit(db_cari('perlengkapan', $id)), $ganti ? 'Kondisi unit diubah' : 'Data unit diperbarui', $ganti ? $lama_u['kondisi'] : '', $ganti ? $isi['kondisi'] : '');
-            flash('sukses', $lama_u['kode_unit'] . ' diperbarui.');
-        } else {
-            $kode = kode_unit_baru((int) $data['kategori_id']);
-            db_tambah('perlengkapan', ['kode_unit' => $kode, 'kategori_id' => (int) $data['kategori_id']] + $isi);
-            catat_riwayat('Perlengkapan', $kode . ' · ' . $isi['nama'], 'Unit baru ditambahkan ke inventaris');
-            flash('sukses', 'Unit ' . $kode . ' · ' . $isi['nama'] . ' ditambahkan.');
+        try {
+            // Perubahan unit dan catatan riwayatnya disimpan dalam satu transaksi (lihat logic_perlengkapan.php).
+            if ($lama_u) {
+                if (ubah_unit($id, $isi)) {
+                    flash('sukses', $lama_u['kode_unit'] . ' diperbarui.');
+                } else {
+                    flash('error', 'Unit tidak ditemukan.');
+                }
+            } else {
+                $kode = tambah_unit((int) $data['kategori_id'], $isi);
+                if ($kode === null) {
+                    simpan_form('dialog-unit', $data, ['kategori_id' => 'Pilih kategori.']);
+                } else {
+                    flash('sukses', 'Unit ' . $kode . ' · ' . $isi['nama'] . ' ditambahkan.');
+                }
+            }
+        } catch (PDOException $e) {
+            error_log('PhotoOps: simpan unit gagal: ' . $e->getMessage());
+            flash('error', 'Data unit gagal disimpan. Coba lagi.');
         }
         muat_ulang();
     }
 
+    // KEBIJAKAN SEMENTARA (sistem hybrid): unit tidak dihapus permanen. Alokasi dan insiden masih disimpan di
+    // PHP Session per browser, jadi pemakaian unit di browser lain tidak bisa diperiksa dari server.
+    // Unit yang tidak dipakai lagi cukup dinonaktifkan; datanya tetap ada untuk riwayat.
     if ($aksi === 'hapus_unit') {
         wajib_boleh('perlengkapan.kelola');
-        $unit = db_cari('perlengkapan', (int) input('id'));
+        $unit = cari_perlengkapan((int) input('id'));
         if ($unit) {
-            $dipakai = array_filter(db('alokasi'), fn ($a) => $a['sumber'] === 'Studio' && (int) $a['perlengkapan_id'] === (int) $unit['id']);
-            if ($dipakai) {
-                flash('error', $unit['kode_unit'] . ' punya riwayat alokasi, jadi tidak bisa dihapus. Ubah statusnya menjadi Nonaktif.');
-                muat_ulang();
-            }
-            db_hapus('perlengkapan', $unit['id']);
-            catat_riwayat('Perlengkapan', label_unit($unit), 'Unit dihapus dari inventaris');
-            flash('sukses', $unit['kode_unit'] . ' dihapus.');
+            flash('error', $unit['kode_unit'] . ' tidak dihapus: pemakaian unit di proyek belum dapat diverifikasi menyeluruh. Ubah statusnya menjadi Nonaktif.');
         }
         muat_ulang();
     }
@@ -59,7 +68,7 @@ if (is_post()) {
         wajib_boleh('insiden.kelola');
         $data = ['perlengkapan_id' => input('perlengkapan_id'), 'jenis' => input('jenis'), 'kondisi' => input('kondisi'), 'proyek_id' => input('proyek_id'), 'deskripsi' => input('deskripsi')];
         $galat = [];
-        if (!db_cari('perlengkapan', (int) $data['perlengkapan_id'])) {
+        if (!cari_perlengkapan((int) $data['perlengkapan_id'])) {
             $galat['perlengkapan_id'] = 'Pilih unit.';
         }
         if (!in_array($data['jenis'], ['Rusak', 'Masalah Teknis'], true)) {
@@ -75,7 +84,17 @@ if (is_post()) {
             simpan_form('dialog-insiden', $data, $galat);
             muat_ulang();
         }
-        $kode = lapor_insiden((int) $data['perlengkapan_id'], db_cari('proyek', (int) $data['proyek_id']) ? (int) $data['proyek_id'] : null, $data['jenis'], $data['deskripsi'], $data['kondisi']);
+        $proyek_insiden = db_cari('proyek', (int) $data['proyek_id']) ? (int) $data['proyek_id'] : null;
+        try {
+            $kode = proses_session_dan_inventaris(fn () => lapor_insiden((int) $data['perlengkapan_id'], $proyek_insiden, $data['jenis'], $data['deskripsi'], $data['kondisi']));
+        } catch (Throwable $e) {
+            if (!galat_db($e)) {
+                throw $e;
+            }
+            error_log('PhotoOps: lapor insiden gagal: ' . $e->getMessage());
+            flash('error', 'Insiden belum dicatat karena database sedang bermasalah. Tidak ada data yang berubah; coba lagi.');
+            muat_ulang();
+        }
         flash('sukses', 'Insiden ' . $kode . ' dicatat. Unit tidak bisa dialokasikan sampai kondisinya kembali Baik.');
         arahkan('pages/perlengkapan.php?tab=insiden');
     }
@@ -84,17 +103,19 @@ if (is_post()) {
         wajib_boleh('insiden.kelola');
         $insiden = db_cari('insiden', (int) input('id'));
         if ($insiden) {
-            $unit = db_cari('perlengkapan', (int) $insiden['perlengkapan_id']);
+            $unit = cari_perlengkapan((int) $insiden['perlengkapan_id']);
             if ($aksi === 'tangani_insiden') {
                 db_ubah('insiden', $insiden['id'], ['status' => 'Ditangani']);
                 catat_riwayat('Insiden', label_unit($unit), $insiden['kode'] . ' mulai ditangani', $insiden['status'], 'Ditangani');
                 flash('sukses', $insiden['kode'] . ' ditandai sedang ditangani.');
             } else {
-                db_ubah('insiden', $insiden['id'], ['status' => 'Selesai']);
-                $masih = array_filter(insiden_terbuka(), fn ($i) => (int) $i['perlengkapan_id'] === (int) $insiden['perlengkapan_id']);
+                // Insiden terbuka lain untuk unit yang sama (selain insiden ini).
+                $masih = array_filter(insiden_terbuka(), fn ($i) => (int) $i['perlengkapan_id'] === (int) $insiden['perlengkapan_id'] && (int) $i['id'] !== (int) $insiden['id']);
+                // Kondisi unit (PostgreSQL) diubah lebih dulu: bila database gagal, status insiden di session belum berubah.
                 if ($unit && !$masih && $unit['kondisi'] !== 'Baik') {
-                    db_ubah('perlengkapan', $unit['id'], ['kondisi' => 'Baik']);
+                    ubah_kondisi_unit($unit['id'], 'Baik');
                 }
+                db_ubah('insiden', $insiden['id'], ['status' => 'Selesai']);
                 catat_riwayat('Insiden', label_unit($unit), $insiden['kode'] . ' selesai, unit kembali layak pakai', $unit['kondisi'] ?? '', $masih ? ($unit['kondisi'] ?? '') : 'Baik');
                 flash('sukses', $insiden['kode'] . ' selesai.' . ($unit && !$masih ? ' ' . $unit['kode_unit'] . ' kembali berkondisi Baik.' : ''));
             }
@@ -136,7 +157,6 @@ if (is_post()) {
 $tab = in_array(query('tab'), ['eksternal', 'insiden'], true) ? query('tab') : 'unit';
 $kelola = boleh('perlengkapan.kelola');
 $ringkas = ringkasan_pemakaian();
-$frekuensi = frekuensi_pakai();
 $terbuka = insiden_terbuka();
 $eksternal = daftar_barang_eksternal();
 $ringkas_eks = ringkasan_eksternal($eksternal);
@@ -155,7 +175,7 @@ judul_halaman('Perlengkapan', $tab === 'eksternal' ? 'Barang Rental dan Milik Kr
 ?>
 <?php if ($tab !== 'eksternal'): ?>
 <div class="grid-kpi">
-<div class="kartu kpi"><p class="kpi-label">Total unit</p><p class="kpi-angka"><?= count(db('perlengkapan')) ?></p><p class="kpi-ket"><?= count(db('kategori')) ?> kategori</p></div>
+<div class="kartu kpi"><p class="kpi-label">Total unit</p><p class="kpi-angka"><?= count(semua_perlengkapan()) ?></p><p class="kpi-ket"><?= count(semua_kategori()) ?> kategori</p></div>
 <div class="kartu kpi"><p class="kpi-label">Tersedia</p><p class="kpi-angka teks-hijau"><?= $ringkas['Tersedia'] ?></p><p class="kpi-ket">Siap dialokasikan</p></div>
 <div class="kartu kpi"><p class="kpi-label">Dipinjam</p><p class="kpi-angka teks-biru"><?= $ringkas['Dipinjam'] ?></p><p class="kpi-ket">Sedang di luar studio</p></div>
 <div class="kartu kpi"><p class="kpi-label">Tidak tersedia</p><p class="kpi-angka teks-merah"><?= $ringkas['Tidak Tersedia'] ?></p><p class="kpi-ket">Maintenance, rusak, atau nonaktif</p></div>
@@ -177,7 +197,8 @@ $eks_tampil = array_values(array_filter($eksternal, function ($b) use ($f_sumber
 }));
 ?>
 <div class="grid-kpi">
-<div class="kartu kpi"><p class="kpi-label">Alokasi eksternal aktif</p><p class="kpi-angka"><?= $ringkas_eks['alokasi_aktif'] ?></p><p class="kpi-ket">baris alokasi, tanpa yang Dibatalkan</p></div>
+<?php $eks_di_proyek = count(array_filter($eksternal, fn ($bx) => isset($bx['serah']['keluar']) && !isset($bx['serah']['kembali']))); ?>
+<div class="kartu kpi"><p class="kpi-label">Alokasi eksternal</p><p class="kpi-angka"><?= $ringkas_eks['alokasi_aktif'] ?></p><p class="kpi-ket">baris tidak dibatalkan · <span data-kpi-eks-di-proyek><?= $eks_di_proyek ?></span> masih di proyek</p></div>
 <div class="kartu kpi"><p class="kpi-label">Unit Rental</p><p class="kpi-angka"><?= $ringkas_eks['unit_rental'] ?></p><p class="kpi-ket">kuantitas barang dari vendor</p></div>
 <div class="kartu kpi"><p class="kpi-label">Unit Milik Kru</p><p class="kpi-angka"><?= $ringkas_eks['unit_kru'] ?></p><p class="kpi-ket">kuantitas barang dibawa anggota tim</p></div>
 <div class="kartu kpi"><p class="kpi-label">Masih direncanakan</p><p class="kpi-angka<?= $ringkas_eks['direncanakan'] ? ' teks-kuning' : '' ?>"><?= $ringkas_eks['direncanakan'] ?></p><p class="kpi-ket">baris alokasi · <?= $ringkas_eks['unit_direncanakan'] ?> unit belum dikonfirmasi</p></div>
@@ -246,7 +267,7 @@ $sewa_pesan = array_filter([
 <tbody>
 <?php foreach ($eks_tampil as $b): ?>
 <?php $a = $b['alokasi']; $pr = $b['proyek']; ?>
-<tr>
+<tr id="alokasi-<?= (int) $a['id'] ?>">
 <td data-label="Barang"><strong class="teks-pecah"><?= e($a['nama_barang'] !== '' ? $a['nama_barang'] : 'Belum dicatat') ?></strong><div class="kecil redup">Untuk <?= e($b['kebutuhan']['nama'] ?? 'kebutuhan dihapus') ?></div><?= $a['catatan'] !== '' ? '<div class="kecil redup teks-pecah" data-catatan>Catatan (teks bebas): ' . e($a['catatan']) . '</div>' : '' ?></td>
 <td data-label="Jumlah" class="angka"><?= (int) $b['jumlah'] ?> unit</td>
 <td data-label="Proyek &amp; periode"><strong><?= e($pr['kode'] ?? '?') ?></strong><div class="kecil redup"><?= e($pr['nama'] ?? 'Proyek tidak ditemukan') ?><?= $pr ? ' · ' . e($pr['status']) : '' ?></div><div class="kecil">Pakai <?= e(rentang_tgl($a['tgl_mulai'], $a['tgl_selesai'])) ?></div></td>
@@ -255,6 +276,19 @@ $sewa_pesan = array_filter([
 <div class="kecil" data-pemeriksaan>
 <?php if ($a['status'] === 'Dibatalkan'): ?>
 <span class="redup">—</span>
+<?php elseif (isset($b['serah']['keluar'])): ?>
+<?php $sr = $b['serah']; $trx_k = db_cari('transaksi', $sr['trx_keluar'] ?? 0); $penuh = isset($sr['kembali']); $sebagian = !$penuh && ($sr['jumlah_kembali'] ?? 0) > 0; ?>
+<div class="status-proyek" <?= $penuh ? 'data-kembali-proyek' : 'data-dipakai-proyek' ?>>
+<?= $penuh ? badge('Sudah Kembali', 'Kembali dari proyek') : ($sebagian ? badge('Kembali Sebagian', 'Kembali sebagian') : badge('Sedang Keluar', 'Dipakai proyek')) ?>
+<div class="saldo-proyek" data-saldo-proyek>Keluar <?= (int) ($sr['jumlah_keluar'] ?? $b['jumlah']) ?> · Kembali <?= (int) ($sr['jumlah_kembali'] ?? 0) ?> · Sisa <?= (int) ($sr['sisa'] ?? 0) ?></div>
+<div class="redup">Keluar <?= e(tgl($sr['keluar'], 'singkat_jam')) ?> · <?= e($trx_k['kode'] ?? '?') ?><?= !empty($trx_k['penerima']) ? ' · diterima ' . e($trx_k['penerima']) : '' ?></div>
+<?php if (($sr['jumlah_kembali'] ?? 0) > 0): ?>
+<div class="redup">Kondisi kembali: <?= e(teks_kondisi($sr['kondisi_rincian'] ?? [])) ?><?= $penuh ? ' · ' . e(tgl($sr['kembali'], 'singkat_jam')) : '' ?></div>
+<?php endif; ?>
+<?php if ($penuh && $a['sumber'] === 'Milik Kru'): ?>
+<div class="redup">Sudah kembali dari proyek.</div>
+<?php endif; ?>
+</div>
 <?php elseif ($a['status'] !== 'Dikonfirmasi'): ?>
 <span class="redup">Menunggu konfirmasi</span>
 <?php elseif (!alokasi_bisa_diperiksa($a)): ?>
@@ -279,13 +313,26 @@ $sewa_pesan = array_filter([
 <div class="kecil">Jatuh tempo: <?= $r['jatuh_tempo'] ? e(tgl($r['jatuh_tempo'])) : 'Belum dicatat' ?><?= $r['jatuh_tempo'] && !$r['dikembalikan'] ? ' · ' . e($r['keterangan']) : '' ?></div>
 <div class="kecil redup">Penerimaan: <?= $r['diterima'] ? 'diterima ' . e(tgl($a['diterima_pada'], 'singkat_jam')) . ' · ' . e($a['kondisi_terima'] ?? '') : 'belum diterima' ?></div>
 <div class="kecil redup">Ke vendor: <?= $r['dikembalikan'] ? 'dikembalikan ' . e(tgl($a['dikembalikan_vendor_pada'], 'singkat_jam')) . ' · ' . e($a['kondisi_kembali_vendor'] ?? '') : 'belum dikembalikan' ?></div>
+<?php if ($r['dipakai_proyek']): ?>
+<div class="kecil teks-kuning" data-kunci-vendor>Masih dipakai proyek: <?= (int) ($b['serah']['sisa'] ?? 0) ?> dari <?= (int) ($b['serah']['jumlah_keluar'] ?? 0) ?> unit belum kembali. Kembalikan ke vendor baru bisa setelah seluruh unit kembali dari proyek.</div>
+<?php elseif (isset($b['serah']['kembali']) && !$r['dikembalikan']): ?>
+<div class="kecil" data-kewajiban-vendor>Sudah kembali dari proyek. Belum dikembalikan ke vendor; kewajiban vendor masih berjalan.</div>
+<?php if (($b['serah']['kondisi_ringkas'] ?? 'Baik') !== 'Baik'): ?>
+<div class="kecil teks-kuning" data-kondisi-proyek>Kembali dari proyek: <?= e(teks_kondisi($b['serah']['kondisi_rincian'] ?? [])) ?>. Periksa sebelum diserahkan ke vendor; status perbaikannya tidak tercatat di sini.</div>
+<?php endif; ?>
+<?php endif; ?>
 <?php if (boleh('rental.kelola') && ($r['bisa_terima'] || $r['bisa_tempo'] || $r['bisa_kembali'])): ?>
 <div class="aksi-rental">
 <?php if ($r['bisa_terima']): ?>
 <?= tombol_modal('dialog-terima-rental', 'Catat penerimaan', $kirim + ['waktu' => waktu_input(sekarang()), 'kondisi' => 'Baik'], 'package', 'btn btn-kecil') ?>
 <?php endif; ?>
 <?php if ($r['bisa_kembali']): ?>
-<?= tombol_modal('dialog-kembali-vendor', 'Kembalikan ke vendor', $kirim + ['waktu' => waktu_input(sekarang()), 'kondisi' => 'Baik'], 'truck', 'btn btn-kecil') ?>
+<?php
+$info_proyek = isset($b['serah']['kembali'])
+    ? 'Sudah kembali seluruhnya dari proyek ' . ($pr['kode'] ?? '?') . ' pada ' . tgl($b['serah']['kembali'], 'singkat_jam') . ': ' . teks_kondisi($b['serah']['kondisi_rincian'] ?? []) . '.' . (($b['serah']['kondisi_ringkas'] ?? 'Baik') !== 'Baik' ? ' Kondisi itu belum tentu sudah diperbaiki; periksa sebelum diserahkan ke vendor.' : '')
+    : 'Rental ini tidak tercatat keluar ke proyek melalui Serah Terima.';
+?>
+<?= tombol_modal('dialog-kembali-vendor', 'Kembalikan ke vendor', $kirim + ['waktu' => waktu_input(sekarang()), 'kondisi' => isset($b['serah']['kembali']) ? ($b['serah']['kondisi_ringkas'] ?: 'Baik') : 'Baik', '_proyek' => $info_proyek], 'truck', 'btn btn-kecil') ?>
 <?php endif; ?>
 <?php if ($r['bisa_tempo'] && $r['jatuh_tempo']): ?>
 <?= tombol_modal('dialog-perpanjang-rental', 'Perpanjang', $kirim + ['_tempo_lama' => tgl($r['jatuh_tempo'], 'panjang'), 'jatuh_tempo' => date('Y-m-d', strtotime($r['jatuh_tempo'] . ' +1 day'))], 'calendar-days', 'btn btn-sekunder btn-kecil') ?>
@@ -311,7 +358,7 @@ $sewa_pesan = array_filter([
 $f_kategori = query('kategori');
 $f_status = query('status');
 $kata = query('q');
-$unit_tampil = array_filter(db('perlengkapan'), function ($u) use ($f_kategori, $f_status, $kata) {
+$unit_tampil = array_filter(semua_perlengkapan(), function ($u) use ($f_kategori, $f_status, $kata) {
     return ($f_kategori === '' || (string) $u['kategori_id'] === $f_kategori)
         && ($f_status === '' || status_pemakaian($u) === $f_status)
         && cocok($kata, $u['kode_unit'], $u['nama'], $u['merek']);
@@ -347,7 +394,7 @@ $unit_tampil = array_filter(db('perlengkapan'), function ($u) use ($f_kategori, 
 <section class="kartu"><?= kosong('Tidak ada unit yang cocok', 'Ubah saringan atau kata kunci pencarian.') ?></section>
 <?php endif; ?>
 
-<?php foreach (db('kategori') as $kat): ?>
+<?php foreach (semua_kategori() as $kat): ?>
 <?php $unit_kat = array_filter($unit_tampil, fn ($u) => (int) $u['kategori_id'] === (int) $kat['id']); ?>
 <?php if (!$unit_kat) { continue; } ?>
 <?php usort($unit_kat, fn ($a, $b) => strcmp($a['kode_unit'], $b['kode_unit'])); ?>
@@ -357,7 +404,7 @@ $unit_tampil = array_filter(db('perlengkapan'), function ($u) use ($f_kategori, 
 </div>
 <div class="tabel-wrap">
 <table class="tabel tabel-kartu">
-<thead><tr><th>Unit</th><th>Kondisi</th><th>Pemakaian</th><th class="angka">Dipakai</th><?= $kelola ? '<th><span class="sr">Aksi</span></th>' : '' ?></tr></thead>
+<thead><tr><th>Unit</th><th>Kondisi</th><th>Pemakaian</th><?= $kelola ? '<th><span class="sr">Aksi</span></th>' : '' ?></tr></thead>
 <tbody>
 <?php foreach ($unit_kat as $u): ?>
 <?php
@@ -372,18 +419,17 @@ $berikut = jadwal_berikutnya($u['id']);
 <?= badge($status) ?>
 <?php if ($keluar): ?>
 <?php $pk = db_cari('proyek', $keluar['proyek_id']); ?>
-<div class="kecil <?= status_keluar($keluar) === 'Terlambat' ? 'teks-merah' : 'redup' ?>">Di <?= e($pk['kode'] ?? '?') ?> · tempo <?= e(tgl($keluar['tgl_selesai'], 'singkat')) ?><?= status_keluar($keluar) === 'Terlambat' ? ' · terlambat ' . hari_terlambat($keluar) . ' hari' : '' ?></div>
+<div class="kecil redup" data-unit-di-proyek>Masih di <?= e($pk['kode'] ?? '?') ?> · jadwal selesai <?= e(tgl($keluar['tgl_selesai'], 'singkat')) ?></div>
 <?php elseif ($berikut): ?>
 <?php $pb = db_cari('proyek', $berikut['proyek_id']); ?>
 <div class="kecil redup">Berikutnya <?= e($pb['kode'] ?? '?') ?> · <?= e(rentang_tgl($berikut['tgl_mulai'], $berikut['tgl_selesai'])) ?></div>
 <?php endif; ?>
 </td>
-<td data-label="Dipakai" class="angka"><?= $frekuensi[$u['id']] ?? 0 ?>×</td>
 <?php if ($kelola): ?>
 <td class="kolom-aksi">
 <div class="aksi-baris">
 <?= tombol_ikon_modal('dialog-unit', 'Ubah ' . $u['kode_unit'], ['id' => $u['id'], 'kategori_id' => $u['kategori_id'], 'nama' => $u['nama'], 'merek' => $u['merek'], 'kondisi' => $u['kondisi'], 'status_aktif' => $u['status_aktif'], 'catatan' => $u['catatan'], '_judul' => 'Ubah ' . $u['kode_unit']], 'pencil') ?>
-<?= tombol_konfirmasi(['label' => 'Hapus ' . $u['kode_unit'], 'ikon' => 'trash-2', 'hanya_ikon' => true, 'aksi' => 'hapus_unit', 'id' => $u['id'], 'judul' => 'Hapus ' . $u['kode_unit'] . '?', 'pesan' => 'Hanya unit yang belum pernah dialokasikan yang bisa dihapus. Unit lama sebaiknya dinonaktifkan.', 'tombol' => 'Hapus unit']) ?>
+<?= tombol_konfirmasi(['label' => 'Hapus ' . $u['kode_unit'], 'ikon' => 'trash-2', 'hanya_ikon' => true, 'aksi' => 'hapus_unit', 'id' => $u['id'], 'judul' => 'Hapus ' . $u['kode_unit'] . '?', 'pesan' => 'Selama data proyek masih tersimpan per browser, unit tidak dihapus permanen. Unit yang tidak dipakai lagi sebaiknya dinonaktifkan.', 'tombol' => 'Hapus unit']) ?>
 </div>
 </td>
 <?php endif; ?>
@@ -400,7 +446,7 @@ $berikut = jadwal_berikutnya($u['id']);
 <?php $insiden = daftar_insiden(); ?>
 <section class="kartu">
 <div class="kartu-kepala">
-<div><h2>Laporan insiden</h2><p><?= count($terbuka) ?> terbuka dari <?= count($insiden) ?> laporan. Insiden dari pengembalian tercatat otomatis.</p></div>
+<div><h2>Laporan insiden</h2><p><?= count($terbuka) ?> terbuka dari <?= count($insiden) ?> laporan. Insiden untuk unit inventaris Studio, termasuk yang tercatat otomatis saat pengembalian. Kondisi barang Rental dan Milik Kru tidak dikelola sebagai insiden; lihat Barang eksternal atau Serah Terima.</p></div>
 </div>
 <?php if (!$insiden): ?>
 <?= kosong('Belum ada insiden', 'Laporan kerusakan atau masalah teknis akan muncul di sini.') ?>
@@ -410,7 +456,7 @@ $berikut = jadwal_berikutnya($u['id']);
 <thead><tr><th>Insiden</th><th>Unit</th><th>Deskripsi</th><th>Status</th><?= boleh('insiden.kelola') ? '<th><span class="sr">Aksi</span></th>' : '' ?></tr></thead>
 <tbody>
 <?php foreach ($insiden as $i): ?>
-<?php $u = db_cari('perlengkapan', (int) $i['perlengkapan_id']); $p = $i['proyek_id'] ? db_cari('proyek', (int) $i['proyek_id']) : null; ?>
+<?php $u = cari_perlengkapan((int) $i['perlengkapan_id']); $p = $i['proyek_id'] ? db_cari('proyek', (int) $i['proyek_id']) : null; ?>
 <tr>
 <td data-label="Insiden"><strong><?= e($i['kode']) ?></strong><div class="kecil redup"><?= e($i['jenis']) ?> · <?= e(tgl($i['waktu'], 'singkat_jam')) ?></div></td>
 <td data-label="Unit"><?= e(label_unit($u)) ?><div class="kecil redup"><?= $p ? e($p['kode']) . ' · ' : '' ?>dilapor <?= e(nama_pengguna($i['pelapor_id'])) ?></div></td>

@@ -13,8 +13,7 @@ if (is_post()) {
 $proyek_semua = db('proyek');
 $proyek_jalan = array_filter($proyek_semua, fn ($p) => in_array($p['status'], ['Dijadwalkan', 'Berlangsung'], true));
 $proyek_draf = array_filter($proyek_semua, fn ($p) => $p['status'] === 'Draf');
-$belum_kembali = unit_belum_kembali();
-$terlambat = array_filter($belum_kembali, fn ($b) => $b['status'] === 'Terlambat');
+$di_proyek = ringkasan_barang_proyek();
 $terbuka = insiden_terbuka();
 $lewat = array_filter($proyek_semua, fn ($p) => persiapan_proyek($p)['lewat']);
 
@@ -36,7 +35,7 @@ $tren = tren_mingguan(6);
 $tren_maks = max(1, ...array_values(array_map(fn ($t) => max($t['Keluar'], $t['Kembali']), $tren)));
 
 $kondisi = array_fill_keys(daftar_kondisi(), 0);
-foreach (db('perlengkapan') as $u) {
+foreach (semua_perlengkapan() as $u) {
     if ($u['status_aktif'] === 'Aktif') {
         $kondisi[$u['kondisi']]++;
     }
@@ -52,7 +51,6 @@ $jarang = array_slice($jarang, 0, 5, true);
 $frek_maks = max(1, ...array_values($frekuensi ?: [1]));
 
 $aktivitas = array_slice(daftar_riwayat(), 0, 7);
-$terlambat_historis = pengembalian_terlambat_historis();
 
 $halaman = ['menu' => 'dashboard', 'bagian' => 'Super Admin', 'judul' => 'Dashboard'];
 require ROOT . '/includes/layout_head.php';
@@ -66,14 +64,14 @@ judul_halaman('Selamat datang, ' . nama_depan($pengguna['nama']), tgl(HARI_INI, 
 <p class="kpi-ket"><?= count($proyek_draf) ?> masih draf</p>
 </a>
 <a class="kartu kpi kpi-tautan" href="<?= e(url('pages/serah-terima.php')) ?>">
-<p class="kpi-label">Unit sedang keluar</p>
-<p class="kpi-angka teks-biru"><?= count($belum_kembali) ?></p>
-<p class="kpi-ket">dari <?= $total_unit ?> unit studio</p>
+<p class="kpi-label">Barang di proyek</p>
+<p class="kpi-angka teks-biru" data-kpi-di-proyek><?= $di_proyek['unit'] ?></p>
+<p class="kpi-ket"><?= $di_proyek['unit'] ? e(teks_per_sumber($di_proyek['per_sumber'])) . ' unit belum kembali' : 'semua barang sudah kembali' ?></p>
 </a>
 <a class="kartu kpi kpi-tautan" href="<?= e(url('pages/serah-terima.php')) ?>">
-<p class="kpi-label">Terlambat kembali</p>
-<p class="kpi-angka<?= $terlambat ? ' teks-merah' : '' ?>"><?= count($terlambat) ?></p>
-<p class="kpi-ket"><?= $terlambat_historis ?> unit pernah telat kembali</p>
+<p class="kpi-label">Unit Studio di proyek</p>
+<p class="kpi-angka" data-kpi-studio-di-proyek><?= $di_proyek['unit_studio'] ?></p>
+<p class="kpi-ket"><?= $di_proyek['unit_studio'] ? 'unit fisik belum kembali, tidak tersedia untuk proyek lain' : 'semua unit Studio sudah kembali' ?></p>
 </a>
 <a class="kartu kpi kpi-tautan" href="<?= e(url('pages/perlengkapan.php?tab=insiden')) ?>">
 <p class="kpi-label">Insiden terbuka</p>
@@ -187,7 +185,7 @@ judul_halaman('Selamat datang, ' . nama_depan($pengguna['nama']), tgl(HARI_INI, 
 <p class="label-kecil">Paling sering</p>
 <ul class="metrik-daftar">
 <?php foreach ($sering as $id => $n): ?>
-<?php $u = db_cari('perlengkapan', $id); ?>
+<?php $u = cari_perlengkapan($id); ?>
 <li>
 <div class="batang-tumpuk-label"><span><?= e($u['kode_unit'] ?? '?') ?> <span class="redup"><?= e($u['nama'] ?? '') ?></span></span><strong><?= $n ?>×</strong></div>
 <?= bilah(persen($n, $frek_maks), 'tinta') ?>
@@ -199,7 +197,7 @@ judul_halaman('Selamat datang, ' . nama_depan($pengguna['nama']), tgl(HARI_INI, 
 <p class="label-kecil">Paling jarang</p>
 <ul class="metrik-daftar">
 <?php foreach ($jarang as $id => $n): ?>
-<?php $u = db_cari('perlengkapan', $id); ?>
+<?php $u = cari_perlengkapan($id); ?>
 <li>
 <div class="batang-tumpuk-label"><span><?= e($u['kode_unit'] ?? '?') ?> <span class="redup"><?= e($u['nama'] ?? '') ?></span></span><strong><?= $n ?>×</strong></div>
 <?= bilah(persen($n, $frek_maks), 'abu') ?>

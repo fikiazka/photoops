@@ -1,7 +1,7 @@
 <?php
 defined('ROOT') || exit;
 ?>
-<?= dialog_buka('dialog-pengguna', lama('id') !== '' ? 'Ubah pengguna' : 'Tambah pengguna', 'Akun baru memakai kata sandi awal nicio123.', 'dialog dialog-lebar') ?>
+<?= dialog_buka('dialog-pengguna', lama('id') !== '' ? 'Ubah pengguna' : 'Tambah pengguna', 'Kata sandi awal dibuat acak dan ditampilkan sekali setelah akun disimpan.', 'dialog dialog-lebar') ?>
 <input type="hidden" name="aksi" value="simpan_pengguna">
 <input type="hidden" name="id" value="<?= e(lama('id')) ?>">
 <div class="baris-bidang">
@@ -24,7 +24,8 @@ defined('ROOT') || exit;
 </div>
 <div class="bidang">
 <label for="pengguna-telepon">Telepon <span class="redup">(opsional)</span></label>
-<input id="pengguna-telepon" name="telepon" type="tel" maxlength="20" value="<?= e(lama('telepon')) ?>">
+<input id="pengguna-telepon" name="telepon" type="tel" maxlength="20" value="<?= e(lama('telepon')) ?>"<?= attr_galat('telepon') ?>>
+<?= pesan_galat('telepon') ?>
 </div>
 </div>
 <div class="baris-bidang">

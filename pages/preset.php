@@ -67,7 +67,7 @@ if (is_post()) {
         if (mb_strlen($data['nama_perlengkapan']) < 2) {
             $galat['nama_perlengkapan'] = 'Isi model barang.';
         }
-        if (!db_cari('kategori', (int) $data['kategori_id'])) {
+        if (!cari_kategori((int) $data['kategori_id'])) {
             $galat['kategori_id'] = 'Pilih kategori.';
         }
         if ((int) $data['jumlah'] < 1 || (int) $data['jumlah'] > 20) {

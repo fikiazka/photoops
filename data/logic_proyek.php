@@ -70,7 +70,7 @@ function anggota_proyek(int $proyek_id): array
     $hasil = [];
     foreach (db('anggota_proyek') as $anggota) {
         if ((int) $anggota['proyek_id'] === $proyek_id) {
-            $anggota['pengguna'] = db_cari('pengguna', $anggota['pengguna_id']);
+            $anggota['pengguna'] = cari_pengguna($anggota['pengguna_id']);
             if ($anggota['pengguna']) {
                 $hasil[] = $anggota;
             }
@@ -120,7 +120,7 @@ function validasi_kebutuhan(array $data, ?array $lama): array
     } elseif ($panjang_nama > 60) {
         $galat['nama'] = 'Nama kebutuhan maksimal 60 karakter.';
     }
-    if (!db_cari('kategori', (int) $data['kategori_id'])) {
+    if (!cari_kategori((int) $data['kategori_id'])) {
         $galat['kategori_id'] = 'Pilih kategori.';
     } elseif ($lama && (int) $data['kategori_id'] !== (int) $lama['kategori_id']) {
         $aktif = count(array_filter(alokasi_kebutuhan($lama['id']), fn ($a) => $a['status'] !== 'Dibatalkan'));
@@ -225,7 +225,7 @@ function alokasi_siap(array $alokasi, array $diperiksa): bool
     if ($alokasi['sumber'] !== 'Studio') {
         return empty($alokasi['dikembalikan_vendor_pada']);
     }
-    $unit = db_cari('perlengkapan', (int) $alokasi['perlengkapan_id']);
+    $unit = cari_perlengkapan((int) $alokasi['perlengkapan_id']);
     return $unit && $unit['status_aktif'] === 'Aktif' && $unit['kondisi'] === 'Baik' && !alokasi_keluar_unit($unit['id']);
 }
 
@@ -235,7 +235,7 @@ function pemenuhan_kebutuhan(array $kebutuhan): array
     $proyek = db_cari('proyek', (int) $kebutuhan['proyek_id']);
     $aktif = $proyek && proyek_aktif($proyek);
     $hasil = ['dialokasikan' => 0, 'direncanakan' => 0, 'dikonfirmasi' => 0, 'diperiksa' => 0, 'siap' => 0, 'siap_eksternal' => 0, 'eksternal' => 0,
-        'keluar' => 0, 'di_luar' => 0, 'terlambat' => 0, 'kembali' => 0, 'kembali_bermasalah' => 0];
+        'eksternal_keluar' => 0, 'keluar' => 0, 'di_luar' => 0, 'kembali' => 0, 'kembali_bermasalah' => 0];
     foreach (alokasi_kebutuhan($kebutuhan['id']) as $alokasi) {
         if ($alokasi['status'] === 'Dibatalkan') {
             continue;
@@ -261,17 +261,18 @@ function pemenuhan_kebutuhan(array $kebutuhan): array
         }
         $serah = serah_alokasi($alokasi['id']);
         if (isset($serah['keluar'])) {
-            $hasil['keluar'] += $qty;
-            if (isset($serah['kembali'])) {
-                $hasil['kembali'] += $qty;
-                if (($serah['kondisi_kembali'] ?? 'Baik') !== 'Baik') {
-                    $hasil['kembali_bermasalah'] += $qty;
-                }
-            } else {
-                $hasil['di_luar'] += $qty;
-                if (status_keluar($alokasi) === 'Terlambat') {
-                    $hasil['terlambat'] += $qty;
-                }
+            // Sprint 3C: hitung dari jumlah transaksi (keluar, akumulasi kembali, sisa), bukan dari banyaknya baris.
+            $keluar_j = $serah['jumlah_keluar'] ?? $qty;
+            $kembali_j = $serah['jumlah_kembali'] ?? 0;
+            $sisa_j = $serah['sisa'] ?? max(0, $keluar_j - $kembali_j);
+            $hasil['keluar'] += $keluar_j;
+            if ($alokasi['sumber'] !== 'Studio') {
+                $hasil['eksternal_keluar'] += $keluar_j;
+            }
+            $hasil['kembali'] += $kembali_j;
+            $hasil['kembali_bermasalah'] += $kembali_j - ($serah['kondisi_rincian']['Baik'] ?? 0);
+            if ($sisa_j > 0) {
+                $hasil['di_luar'] += $sisa_j;
             }
         }
     }
@@ -311,12 +312,12 @@ function rincian_pemenuhan(array $p): string
         }
     }
     if ($p['keluar'] > 0) {
-        $teks .= ' · unit Studio keluar ' . $p['keluar'] . ': di luar ' . $p['di_luar'] . ', kembali ' . $p['kembali'];
+        $teks .= ' · unit keluar ' . $p['keluar'] . ': di luar ' . $p['di_luar'] . ', kembali ' . $p['kembali'];
         if ($p['kembali_bermasalah'] > 0) {
             $teks .= ' (' . $p['kembali_bermasalah'] . ' Rusak/Maintenance)';
         }
-        if ($p['eksternal'] > 0) {
-            $teks .= ' · Rental/Kru belum dicatat di serah terima';
+        if ($p['eksternal'] > $p['eksternal_keluar']) {
+            $teks .= ' · ' . ($p['eksternal'] - $p['eksternal_keluar']) . ' unit Rental/Kru belum keluar';
         }
     }
     return $teks;
@@ -328,10 +329,8 @@ function status_pergerakan(array $hitung): string
         return '';
     }
     if ($hitung['di_luar'] > 0) {
-        if ($hitung['kembali'] > 0) {
-            return 'Pengembalian Sebagian';
-        }
-        return $hitung['terlambat'] > 0 ? 'Belum Kembali' : 'Sedang Keluar';
+        // Sprint 3E final: berdasarkan saldo transaksi saja, tidak lagi membedakan "lewat jadwal event".
+        return $hitung['kembali'] > 0 ? 'Pengembalian Sebagian' : 'Belum Kembali';
     }
     return $hitung['eksternal'] > 0 ? 'Studio Sudah Kembali' : 'Sudah Kembali';
 }
@@ -339,7 +338,7 @@ function status_pergerakan(array $hitung): string
 function nama_barang_alokasi(array $alokasi): string
 {
     if ($alokasi['sumber'] === 'Studio') {
-        return db_cari('perlengkapan', (int) $alokasi['perlengkapan_id'])['nama'] ?? 'Unit dihapus';
+        return cari_perlengkapan((int) $alokasi['perlengkapan_id'])['nama'] ?? 'Unit dihapus';
     }
     return $alokasi['nama_barang'];
 }
@@ -347,7 +346,7 @@ function nama_barang_alokasi(array $alokasi): string
 function keterangan_sumber(array $alokasi): string
 {
     if ($alokasi['sumber'] === 'Studio') {
-        return db_cari('perlengkapan', (int) $alokasi['perlengkapan_id'])['kode_unit'] ?? '—';
+        return cari_perlengkapan((int) $alokasi['perlengkapan_id'])['kode_unit'] ?? '—';
     }
     if ($alokasi['sumber'] === 'Rental') {
         return $alokasi['vendor'];
@@ -415,6 +414,199 @@ function persiapan_proyek(array $proyek): array
     ];
 }
 
+function alokasi_sesuai_kebutuhan(array $alokasi, ?array $kebutuhan, int $proyek_id): bool
+{
+    if (!$kebutuhan || (int) $kebutuhan['proyek_id'] !== $proyek_id || !in_array($alokasi['sumber'], daftar_sumber(), true)) {
+        return false;
+    }
+    if ($alokasi['sumber'] === 'Studio') {
+        $unit = cari_perlengkapan((int) $alokasi['perlengkapan_id']);
+        return !$unit || (int) $unit['kategori_id'] === (int) $kebutuhan['kategori_id'];
+    }
+    if (trim((string) $alokasi['nama_barang']) === '') {
+        return false;
+    }
+    if ($alokasi['sumber'] === 'Rental') {
+        return trim((string) $alokasi['vendor']) !== '';
+    }
+    return peran_di_proyek($proyek_id, (int) $alokasi['pemilik_id']) !== '';
+}
+
+function syarat_persiapan(array $proyek): array
+{
+    $pid = (int) $proyek['id'];
+    $diperiksa = id_diperiksa($pid);
+    $h = ['kebutuhan' => 0, 'unit_butuh' => 0, 'kurang' => 0, 'lebih' => 0, 'alokasi' => 0, 'memenuhi' => 0, 'sudah_keluar' => 0,
+        'tidak_sesuai' => 0, 'belum_konfirmasi' => 0, 'rental_belum_terima' => 0, 'rental_dikembalikan' => 0,
+        'unit_tidak_layak' => 0, 'unit_bentrok' => 0, 'belum_diperiksa' => 0,
+        'unit_sumber' => ['Studio' => 0, 'Rental' => 0, 'Milik Kru' => 0]];
+    $kebutuhan = [];
+    $kebutuhan_masalah = [];
+    foreach (kebutuhan_proyek($pid) as $k) {
+        $kebutuhan[(int) $k['id']] = $k;
+        $p = pemenuhan_kebutuhan($k);
+        $h['kebutuhan']++;
+        $h['unit_butuh'] += $p['jumlah'];
+        $h['kurang'] += $p['sisa'];
+        $h['lebih'] += max(0, $p['dialokasikan'] - $p['jumlah']);
+        if ($p['sisa'] > 0 || $p['dialokasikan'] > $p['jumlah']) {
+            $kebutuhan_masalah[(int) $k['id']] = true;
+        }
+    }
+    $alokasi_masalah = 0;
+    $id_masalah = [];
+    foreach (alokasi_proyek($pid, true) as $a) {
+        $h['alokasi']++;
+        $k = $kebutuhan[(int) $a['kebutuhan_id']] ?? null;
+        $keluar = isset(serah_alokasi($a['id'])['keluar']);
+        if ($keluar) {
+            $h['sudah_keluar']++;
+        }
+        $unit = $a['sumber'] === 'Studio' ? cari_perlengkapan((int) $a['perlengkapan_id']) : null;
+        $lain = $unit && !$keluar ? alokasi_keluar_unit((int) $unit['id']) : null;
+        $masalah = '';
+        if (!alokasi_sesuai_kebutuhan($a, $k, $pid)) {
+            $masalah = 'tidak_sesuai';
+        } elseif ($a['status'] !== 'Dikonfirmasi') {
+            $masalah = 'belum_konfirmasi';
+        } elseif ($a['sumber'] === 'Rental' && empty($a['diterima_pada'])) {
+            $masalah = 'rental_belum_terima';
+        } elseif ($a['sumber'] === 'Rental' && !empty($a['dikembalikan_vendor_pada'])) {
+            $masalah = 'rental_dikembalikan';
+        } elseif ($a['sumber'] === 'Studio' && !$keluar && (!$unit || $unit['status_aktif'] !== 'Aktif' || $unit['kondisi'] !== 'Baik')) {
+            $masalah = 'unit_tidak_layak';
+        } elseif ($lain && (int) $lain['id'] !== (int) $a['id']) {
+            $masalah = 'unit_bentrok';
+        } elseif (!in_array((int) $a['id'], $diperiksa, true)) {
+            $masalah = 'belum_diperiksa';
+        }
+        if ($masalah !== '') {
+            $h[$masalah]++;
+            $alokasi_masalah++;
+            $id_masalah[$masalah][] = (int) $a['id'];
+            if ($k) {
+                $kebutuhan_masalah[(int) $k['id']] = true;
+            }
+            continue;
+        }
+        $h['memenuhi']++;
+        $h['unit_sumber'][$a['sumber']] += jumlah_alokasi($a);
+    }
+    $pesan = [];
+    if (!proyek_aktif($proyek)) {
+        $pesan['proyek_tutup'] = 'Proyek berstatus ' . $proyek['status'] . ', jadi persiapannya tidak bisa dikonfirmasi lagi.';
+    }
+    if ($h['kebutuhan'] === 0) {
+        $pesan['tanpa_kebutuhan'] = 'Proyek belum punya kebutuhan perlengkapan.';
+    }
+    $teks = [
+        'kurang' => 'Masih ada %d unit perlengkapan yang belum dialokasikan.',
+        'lebih' => 'Ada %d unit alokasi yang melebihi jumlah kebutuhan.',
+        'tidak_sesuai' => 'Ada %d alokasi yang sumber atau kategorinya tidak sesuai dengan kebutuhan.',
+        'belum_konfirmasi' => 'Masih ada %d alokasi yang belum dikonfirmasi.',
+        'rental_belum_terima' => 'Ada %d barang rental yang belum tercatat diterima dari vendor.',
+        'rental_dikembalikan' => 'Ada %d barang rental yang sudah dikembalikan ke vendor, jadi tidak lagi tersedia untuk proyek ini.',
+        'unit_tidak_layak' => 'Ada %d unit studio yang tidak layak pakai (rusak, maintenance, nonaktif, atau dihapus).',
+        'unit_bentrok' => 'Ada %d unit studio yang masih keluar di proyek lain.',
+        'belum_diperiksa' => 'Masih ada %d perlengkapan yang belum diperiksa.',
+    ];
+    foreach ($teks as $kunci => $format) {
+        if ($h[$kunci] > 0) {
+            $pesan[$kunci] = sprintf($format, $h[$kunci]);
+        }
+    }
+    return $h + [
+        'kebutuhan_bermasalah' => count($kebutuhan_masalah),
+        'alokasi_bermasalah' => $alokasi_masalah,
+        'masalah' => array_values($pesan),
+        'masalah_kunci' => $pesan,
+        'id_masalah' => $id_masalah,
+        'siap' => !$pesan,
+    ];
+}
+
+function penilaian_persiapan(array $proyek): array
+{
+    $syarat = syarat_persiapan($proyek);
+    $rekam = rekam_persiapan((int) $proyek['id']);
+    $pada = $rekam['dikonfirmasi_pada'] ?? null;
+    $aktif = proyek_aktif($proyek);
+    $masalah_kunci = $syarat['masalah_kunci'];
+    if (!$pada && $aktif && $syarat['sudah_keluar'] > 0) {
+        $masalah_kunci['data_lama'] = $syarat['sudah_keluar'] . ' alokasi barang sudah tercatat keluar sebelum ada konfirmasi persiapan (data lama). Konfirmasi baru tidak dibuat agar urutan transaksi tetap jujur.';
+    }
+    $masalah = array_values($masalah_kunci);
+    if ($pada) {
+        $status = 'Persiapan Dikonfirmasi Selesai';
+    } elseif (!$aktif) {
+        $status = 'Tidak Dikonfirmasi';
+    } else {
+        $status = $masalah ? 'Belum Siap' : 'Siap untuk Dikonfirmasi';
+    }
+    $beku = $pada && $aktif && $syarat['sudah_keluar'] > 0;
+    return [
+        'syarat' => $syarat,
+        'masalah' => $masalah,
+        'masalah_kunci' => $masalah_kunci,
+        'status' => $status,
+        'dikonfirmasi_pada' => $pada,
+        'dikonfirmasi_oleh' => $rekam['dikonfirmasi_oleh'] ?? null,
+        'konfirmasi_batal' => $rekam['konfirmasi_batal'] ?? null,
+        'terkunci' => $pada && $aktif,
+        'beku' => $beku,
+        'boleh_konfirmasi' => !$pada && $aktif && !$masalah,
+        'boleh_buka' => $pada && $aktif && !$beku,
+        'perlu_cabut' => $pada && $aktif && !$beku && !$syarat['siap'],
+    ];
+}
+
+function wajib_persiapan_terbuka(array $proyek): void
+{
+    $rekam = rekam_persiapan((int) $proyek['id']);
+    if (!proyek_aktif($proyek) || empty($rekam['dikonfirmasi_pada'])) {
+        return;
+    }
+    flash('error', 'Persiapan ' . $proyek['kode'] . ' sudah dikonfirmasi selesai oleh ' . nama_pengguna($rekam['dikonfirmasi_oleh']) . ' pada ' . tgl($rekam['dikonfirmasi_pada'], 'lengkap') . '. Kebutuhan, alokasi, dan checklist dikunci selama konfirmasi berlaku. Buka ulang persiapan di tab Persiapan jika memang perlu diubah.');
+    muat_ulang();
+}
+
+function cabut_konfirmasi_persiapan(array $proyek, array $rekam, string $alasan, bool $otomatis): void
+{
+    db_ubah('persiapan', (int) $rekam['id'], [
+        'dikonfirmasi_pada' => null,
+        'dikonfirmasi_oleh' => null,
+        'konfirmasi_batal' => [
+            'pada' => date('Y-m-d H:i', strtotime(sekarang())),
+            'oleh' => $_SESSION['user_id'] ?? null,
+            'otomatis' => $otomatis,
+            'alasan' => $alasan,
+            'dikonfirmasi_pada' => $rekam['dikonfirmasi_pada'],
+            'dikonfirmasi_oleh' => $rekam['dikonfirmasi_oleh'],
+        ],
+    ]);
+    catat_riwayat('Persiapan', $proyek['kode'], ($otomatis ? 'Konfirmasi persiapan selesai tidak berlaku lagi: ' : 'Persiapan dibuka ulang: ') . $alasan, 'Dikonfirmasi Selesai', $otomatis ? 'Perlu konfirmasi ulang' : 'Dibuka ulang');
+}
+
+function sinkron_konfirmasi_persiapan(): void
+{
+    foreach (db('persiapan') as $rekam) {
+        if (empty($rekam['dikonfirmasi_pada'])) {
+            continue;
+        }
+        $proyek = db_cari('proyek', (int) $rekam['proyek_id']);
+        if (!$proyek) {
+            continue;
+        }
+        $nilai = penilaian_persiapan($proyek);
+        if (!$nilai['perlu_cabut']) {
+            continue;
+        }
+        $alasan = implode(' ', $nilai['syarat']['masalah']);
+        cabut_konfirmasi_persiapan($proyek, $rekam, $alasan, true);
+        flash('info', 'Konfirmasi persiapan ' . $proyek['kode'] . ' tidak berlaku lagi karena data berubah: ' . $alasan . ' Periksa ulang lalu konfirmasi kembali.');
+    }
+}
+
 function kode_proyek_baru(): string
 {
     $maks = 0;
@@ -448,7 +640,7 @@ function validasi_proyek(array $data): array
     } elseif ($mulai && $deadline > $mulai) {
         $galat['deadline_persiapan'] = 'Batas persiapan harus sebelum acara dimulai.';
     }
-    $pic = db_cari('pengguna', (int) $data['pic_id']);
+    $pic = cari_pengguna((int) $data['pic_id']);
     if (!$pic || $pic['peran'] !== 'us') {
         $galat['pic_id'] = 'Pilih PIC dari daftar kru.';
     }
@@ -516,6 +708,11 @@ function simpan_proyek_dari_form(array $pengguna): void
         atur_pic($id, $isi['pic_id']);
         $ganti = $lama['status'] !== $isi['status'];
         catat_riwayat('Proyek', $lama['kode'] . ' · ' . $isi['nama'], $ganti ? 'Status proyek diubah' : 'Detail proyek diperbarui', $ganti ? $lama['status'] : '', $ganti ? $isi['status'] : '');
+        if ((string) $lama['deadline_persiapan'] !== (string) $isi['deadline_persiapan']) {
+            // Sprint 3E: perubahan deadline dicatat eksplisit (lama → baru, format Y-m-d H:i) agar ketepatan waktu konfirmasi
+            // yang terjadi sebelum perubahan tetap dinilai terhadap deadline saat itu.
+            catat_riwayat('Proyek', $lama['kode'] . ' · ' . $isi['nama'], 'Deadline persiapan diubah', (string) $lama['deadline_persiapan'], (string) $isi['deadline_persiapan']);
+        }
         flash('sukses', 'Proyek ' . $lama['kode'] . ' diperbarui.');
         muat_ulang();
     }
@@ -599,7 +796,7 @@ function masalah_operasional(): array
             if ($alokasi['sumber'] !== 'Studio' || sedang_keluar($alokasi) || sudah_kembali($alokasi)) {
                 continue;
             }
-            $unit = db_cari('perlengkapan', (int) $alokasi['perlengkapan_id']);
+            $unit = cari_perlengkapan((int) $alokasi['perlengkapan_id']);
             if (!$unit) {
                 continue;
             }
