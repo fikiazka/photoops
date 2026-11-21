@@ -72,7 +72,7 @@ function alasan_tidak_bisa_keluar(array $alokasi, array $diperiksa): string
         }
         $lain = alokasi_keluar_unit((int) $unit['id']);
         if ($lain) {
-            return 'Masih keluar di ' . (db_cari('proyek', $lain['proyek_id'])['kode'] ?? '?');
+            return 'Masih keluar di ' . (cari_proyek($lain['proyek_id'])['kode'] ?? '?');
         }
     }
     if ($alokasi['sumber'] === 'Rental') {
@@ -216,7 +216,7 @@ function kelompok_per_proyek(array $daftar): array
     $hasil = [];
     foreach ($daftar as $baris) {
         $id = (int) $baris['alokasi']['proyek_id'];
-        $hasil[$id] = $hasil[$id] ?? ['proyek' => db_cari('proyek', $id), 'unit' => []];
+        $hasil[$id] = $hasil[$id] ?? ['proyek' => cari_proyek($id), 'unit' => []];
         $hasil[$id]['unit'][] = $baris;
     }
     return $hasil;
@@ -225,7 +225,7 @@ function kelompok_per_proyek(array $daftar): array
 function proyek_siap_keluar(): array
 {
     $hasil = [];
-    foreach (urutkan_proyek(array_values(db('proyek'))) as $proyek) {
+    foreach (urutkan_proyek(array_values(semua_proyek())) as $proyek) {
         if (!proyek_aktif($proyek)) {
             continue;
         }
@@ -364,7 +364,7 @@ function daftar_transaksi(?int $proyek_id = null): array
             continue;
         }
         $trx['detail'] = $detail[$trx['id']] ?? [];
-        $trx['proyek'] = db_cari('proyek', $trx['proyek_id']);
+        $trx['proyek'] = cari_proyek($trx['proyek_id']);
         $hasil[] = $trx;
     }
     usort($hasil, fn ($a, $b) => strcmp($b['waktu'], $a['waktu']));

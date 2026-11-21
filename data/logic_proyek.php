@@ -16,15 +16,95 @@ function proyek_aktif(array $proyek): bool
     return !in_array($proyek['status'], ['Selesai', 'Dibatalkan'], true);
 }
 
+// ---------------------------------------------------------------------------------------------
+// Proyek dan anggota proyek di PostgreSQL (tabel proyek, anggota_proyek, persiapan_proyek).
+//   - PIC disimpan di proyek.pic_id; anggota_proyek hanya berisi kru (PIC tidak dicatat di sana).
+//   - Modul yang masih memakai PHP Session (kebutuhan, alokasi, persiapan, serah terima, insiden) tetap menyimpan
+//     proyek_id dan membaca proyek lewat semua_proyek() / cari_proyek(), seperti unit Studio di Sprint Backend 2.
+//   - Waktu dibaca dengan TO_CHAR berformat 'YYYY-MM-DD HH24:MI' agar sama dengan format data session
+//     (dipakai tgl(), waktu_input(), substr(..., 0, 10), dan perbandingan dengan sekarang()).
+// ---------------------------------------------------------------------------------------------
+
+const KOLOM_PROYEK = "id, kode, nama, klien, lokasi,
+    TO_CHAR(mulai, 'YYYY-MM-DD HH24:MI') AS mulai,
+    TO_CHAR(selesai, 'YYYY-MM-DD HH24:MI') AS selesai,
+    TO_CHAR(deadline_persiapan, 'YYYY-MM-DD HH24:MI') AS deadline_persiapan,
+    status, pic_id, catatan, dibuat_oleh";
+
+function proyek_dari_baris(array $baris): array
+{
+    foreach (['id', 'pic_id', 'dibuat_oleh'] as $kolom) {
+        $baris[$kolom] = (int) $baris[$kolom];
+    }
+    return $baris;
+}
+
+// Semua proyek, ber-key id. Dibaca sekali per request; $muat_ulang = true sesudah proyek diubah.
+function semua_proyek(bool $muat_ulang = false): array
+{
+    static $daftar = null;
+    if ($daftar === null || $muat_ulang) {
+        $daftar = [];
+        foreach (sql_semua('SELECT ' . KOLOM_PROYEK . ' FROM proyek ORDER BY id') as $baris) {
+            $baris = proyek_dari_baris($baris);
+            $daftar[$baris['id']] = $baris;
+        }
+    }
+    return $daftar;
+}
+
+function cari_proyek($id): ?array
+{
+    return $id ? (semua_proyek()[(int) $id] ?? null) : null;
+}
+
+// Semua baris kru (anggota_proyek), ber-key id.
+function semua_anggota(bool $muat_ulang = false): array
+{
+    static $daftar = null;
+    if ($daftar === null || $muat_ulang) {
+        $daftar = [];
+        foreach (sql_semua('SELECT id, proyek_id, pengguna_id FROM anggota_proyek ORDER BY id') as $baris) {
+            $baris = array_map('intval', $baris);
+            $daftar[$baris['id']] = $baris;
+        }
+    }
+    return $daftar;
+}
+
+// Penanda bahwa proyek/tim berubah di PostgreSQL pada request ini. Bootstrap memakainya untuk menjalankan
+// sinkron_konfirmasi_persiapan(), karena perubahan di PostgreSQL tidak mengubah $_SESSION['db'].
+function proyek_berubah(?bool $atur = null): bool
+{
+    static $berubah = false;
+    if ($atur !== null) {
+        $berubah = $atur;
+    }
+    return $berubah;
+}
+
+function muat_ulang_proyek(): void
+{
+    semua_proyek(true);
+    semua_anggota(true);
+    proyek_berubah(true);
+}
+
+// Proyek yang diikuti pengguna, sebagai PIC (proyek.pic_id) atau kru (anggota_proyek).
 function id_proyek_pengguna(int $pengguna_id): array
 {
     $hasil = [];
-    foreach (db('anggota_proyek') as $anggota) {
-        if ((int) $anggota['pengguna_id'] === $pengguna_id) {
-            $hasil[] = (int) $anggota['proyek_id'];
+    foreach (semua_proyek() as $proyek) {
+        if ($proyek['pic_id'] === $pengguna_id) {
+            $hasil[] = $proyek['id'];
         }
     }
-    return $hasil;
+    foreach (semua_anggota() as $anggota) {
+        if ($anggota['pengguna_id'] === $pengguna_id) {
+            $hasil[] = $anggota['proyek_id'];
+        }
+    }
+    return array_values(array_unique($hasil));
 }
 
 function boleh_lihat_proyek(array $proyek, array $pengguna): bool
@@ -47,7 +127,7 @@ function urutkan_proyek(array $daftar): array
 
 function proyek_terlihat(array $pengguna): array
 {
-    $daftar = array_values(db('proyek'));
+    $daftar = array_values(semua_proyek());
     if (!boleh('proyek.semua')) {
         $milik = id_proyek_pengguna($pengguna['id']);
         $daftar = array_values(array_filter($daftar, fn ($p) => in_array((int) $p['id'], $milik, true)));
@@ -55,45 +135,177 @@ function proyek_terlihat(array $pengguna): array
     return urutkan_proyek($daftar);
 }
 
+// 'PIC' bila pengguna = proyek.pic_id, 'Kru' bila tercatat di anggota_proyek, '' bila bukan anggota.
 function peran_di_proyek(int $proyek_id, int $pengguna_id): string
 {
-    foreach (db('anggota_proyek') as $anggota) {
-        if ((int) $anggota['proyek_id'] === $proyek_id && (int) $anggota['pengguna_id'] === $pengguna_id) {
-            return $anggota['peran'];
+    $proyek = cari_proyek($proyek_id);
+    if ($proyek && $proyek['pic_id'] === $pengguna_id) {
+        return 'PIC';
+    }
+    foreach (semua_anggota() as $anggota) {
+        if ($anggota['proyek_id'] === $proyek_id && $anggota['pengguna_id'] === $pengguna_id) {
+            return 'Kru';
         }
     }
     return '';
 }
 
+// Daftar tim untuk tampilan: PIC (dari proyek.pic_id, baris dengan id 0 karena tidak ada di anggota_proyek) lalu kru.
+// Bentuk baris sama dengan data session lama: id, proyek_id, pengguna_id, peran, pengguna.
 function anggota_proyek(int $proyek_id): array
 {
+    $proyek = cari_proyek($proyek_id);
+    if (!$proyek) {
+        return [];
+    }
+    $baris = [['id' => 0, 'proyek_id' => $proyek_id, 'pengguna_id' => $proyek['pic_id'], 'peran' => 'PIC']];
+    foreach (semua_anggota() as $anggota) {
+        if ($anggota['proyek_id'] === $proyek_id && $anggota['pengguna_id'] !== $proyek['pic_id']) {
+            $baris[] = $anggota + ['peran' => 'Kru'];
+        }
+    }
     $hasil = [];
-    foreach (db('anggota_proyek') as $anggota) {
-        if ((int) $anggota['proyek_id'] === $proyek_id) {
-            $anggota['pengguna'] = cari_pengguna($anggota['pengguna_id']);
-            if ($anggota['pengguna']) {
-                $hasil[] = $anggota;
-            }
+    foreach ($baris as $anggota) {
+        $anggota['pengguna'] = cari_pengguna($anggota['pengguna_id']);
+        if ($anggota['pengguna']) {
+            $hasil[] = $anggota;
         }
     }
     usort($hasil, fn ($a, $b) => ($a['peran'] === 'PIC' ? 0 : 1) <=> ($b['peran'] === 'PIC' ? 0 : 1) ?: strcmp($a['pengguna']['nama'], $b['pengguna']['nama']));
     return $hasil;
 }
 
-function atur_pic(int $proyek_id, int $pic_id): void
+// PIC dan kru baru harus User/Kru (peran us) yang Aktif. Dipanggil di dalam transaksi: FOR SHARE menahan baris akun
+// sampai COMMIT, sehingga akun tidak bisa dinonaktifkan/diubah perannya di tengah penugasan. Hasil: nama, atau null.
+function kunci_pengguna_kru(int $pengguna_id): ?string
 {
-    foreach (db('anggota_proyek') as $anggota) {
-        if ((int) $anggota['proyek_id'] === $proyek_id && $anggota['peran'] === 'PIC' && (int) $anggota['pengguna_id'] !== $pic_id) {
-            db_ubah('anggota_proyek', $anggota['id'], ['peran' => 'Kru']);
+    $baris = sql_satu("SELECT nama FROM pengguna WHERE id = :id AND peran = 'us' AND status = 'Aktif' FOR SHARE", ['id' => $pengguna_id]);
+    return $baris['nama'] ?? null;
+}
+
+// Proyek baru: kode dari sequence seq_kode_proyek, baris persiapan_proyek (relasi 1:1), dan riwayat dalam SATU transaksi.
+// Hasil: ['id' => ..., 'kode' => ...], atau null bila PIC tidak sah (tidak ada yang disimpan).
+function buat_proyek(array $isi, int $pembuat_id): ?array
+{
+    $hasil = sql_transaksi(function () use ($isi, $pembuat_id) {
+        if (kunci_pengguna_kru($isi['pic_id']) === null) {
+            return null;
         }
+        $nomor = (int) sql_satu("SELECT nextval('seq_kode_proyek') AS nomor")['nomor'];
+        $kode = 'PRJ-' . str_pad((string) $nomor, 3, '0', STR_PAD_LEFT);
+        $id = (int) sql_satu('INSERT INTO proyek (kode, nama, klien, lokasi, mulai, selesai, deadline_persiapan, status, pic_id, catatan, dibuat_oleh)
+                              VALUES (:kode, :nama, :klien, :lokasi, :mulai, :selesai, :deadline_persiapan, :status, :pic_id, :catatan, :dibuat_oleh)
+                              RETURNING id', ['kode' => $kode, 'dibuat_oleh' => $pembuat_id] + $isi)['id'];
+        sql_jalankan('INSERT INTO persiapan_proyek (proyek_id) VALUES (:id)', ['id' => $id]);
+        catat_riwayat_proyek('Proyek', $kode . ' · ' . $isi['nama'], 'Proyek baru dibuat');
+        return ['id' => $id, 'kode' => $kode];
+    });
+    if ($hasil) {
+        muat_ulang_proyek();
     }
-    foreach (db('anggota_proyek') as $anggota) {
-        if ((int) $anggota['proyek_id'] === $proyek_id && (int) $anggota['pengguna_id'] === $pic_id) {
-            db_ubah('anggota_proyek', $anggota['id'], ['peran' => 'PIC']);
-            return;
+    return $hasil;
+}
+
+// Ubah proyek. SELECT ... FOR UPDATE mengunci baris proyek sehingga perubahan tim dan PIC pada proyek yang sama berjalan
+// bergantian. Bila PIC diganti: PIC lama menjadi kru, baris kru milik PIC baru dihapus (PIC tidak dicatat ganda).
+// Hasil: ['status' => ok | tidak_ada | pic_tidak_sah, 'lama' => data proyek sebelum diubah].
+function ubah_proyek(int $id, array $isi): array
+{
+    $hasil = sql_transaksi(function () use ($id, $isi) {
+        $lama = sql_satu('SELECT ' . KOLOM_PROYEK . ' FROM proyek WHERE id = :id FOR UPDATE', ['id' => $id]);
+        if (!$lama) {
+            return ['status' => 'tidak_ada', 'lama' => null];
         }
+        $lama = proyek_dari_baris($lama);
+        $pic_baru = kunci_pengguna_kru($isi['pic_id']);
+        if ($pic_baru === null) {
+            return ['status' => 'pic_tidak_sah', 'lama' => $lama];
+        }
+        sql_jalankan('UPDATE proyek
+                      SET nama = :nama, klien = :klien, lokasi = :lokasi, mulai = :mulai, selesai = :selesai,
+                          deadline_persiapan = :deadline_persiapan, status = :status, pic_id = :pic_id, catatan = :catatan
+                      WHERE id = :id', $isi + ['id' => $id]);
+        $label = $lama['kode'] . ' · ' . $isi['nama'];
+        if ($lama['pic_id'] !== $isi['pic_id']) {
+            sql_jalankan('INSERT INTO anggota_proyek (proyek_id, pengguna_id) VALUES (:proyek_id, :pengguna_id)
+                          ON CONFLICT (proyek_id, pengguna_id) DO NOTHING', ['proyek_id' => $id, 'pengguna_id' => $lama['pic_id']]);
+            sql_jalankan('DELETE FROM anggota_proyek WHERE proyek_id = :proyek_id AND pengguna_id = :pengguna_id',
+                ['proyek_id' => $id, 'pengguna_id' => $isi['pic_id']]);
+            catat_riwayat_proyek('Tim', $lama['kode'], 'PIC diganti, PIC lama menjadi kru', nama_pengguna($lama['pic_id']), $pic_baru);
+        }
+        $ganti = $lama['status'] !== $isi['status'];
+        catat_riwayat_proyek('Proyek', $label, $ganti ? 'Status proyek diubah' : 'Detail proyek diperbarui', $ganti ? $lama['status'] : '', $ganti ? $isi['status'] : '');
+        if ($lama['deadline_persiapan'] !== $isi['deadline_persiapan']) {
+            // Dicatat eksplisit (lama → baru, format Y-m-d H:i): konfirmasi persiapan lama tanpa snapshot deadline
+            // tetap dinilai terhadap deadline yang berlaku saat itu (lihat deadline_saat_konfirmasi()).
+            catat_riwayat_proyek('Proyek', $label, 'Deadline persiapan diubah', $lama['deadline_persiapan'], $isi['deadline_persiapan']);
+        }
+        return ['status' => 'ok', 'lama' => $lama];
+    });
+    if ($hasil['status'] === 'ok') {
+        muat_ulang_proyek();
     }
-    db_tambah('anggota_proyek', ['proyek_id' => $proyek_id, 'pengguna_id' => $pic_id, 'peran' => 'PIC']);
+    return $hasil;
+}
+
+// Tambah kru. Baris proyek dikunci agar tidak bertabrakan dengan penggantian PIC; UNIQUE (proyek_id, pengguna_id)
+// + ON CONFLICT DO NOTHING mencegah baris ganda walau dua permintaan datang bersamaan.
+// Hasil: ok | tidak_ada | proyek_tutup | calon_tidak_sah | pic | sudah_ada.
+function tambah_kru(int $proyek_id, int $pengguna_id): string
+{
+    $hasil = sql_transaksi(function () use ($proyek_id, $pengguna_id) {
+        $proyek = sql_satu('SELECT kode, status, pic_id FROM proyek WHERE id = :id FOR UPDATE', ['id' => $proyek_id]);
+        if (!$proyek) {
+            return 'tidak_ada';
+        }
+        if (!proyek_aktif($proyek)) {
+            return 'proyek_tutup';
+        }
+        $nama = kunci_pengguna_kru($pengguna_id);
+        if ($nama === null) {
+            return 'calon_tidak_sah';
+        }
+        if ((int) $proyek['pic_id'] === $pengguna_id) {
+            return 'pic';
+        }
+        $baru = sql_satu('INSERT INTO anggota_proyek (proyek_id, pengguna_id) VALUES (:proyek_id, :pengguna_id)
+                          ON CONFLICT (proyek_id, pengguna_id) DO NOTHING RETURNING id', ['proyek_id' => $proyek_id, 'pengguna_id' => $pengguna_id]);
+        if (!$baru) {
+            return 'sudah_ada';
+        }
+        catat_riwayat_proyek('Tim', $proyek['kode'], $nama . ' ditambahkan sebagai kru');
+        return 'ok';
+    });
+    if ($hasil === 'ok') {
+        muat_ulang_proyek();
+    }
+    return $hasil;
+}
+
+// Lepas kru (baris anggota_proyek). PIC tidak ada di tabel ini, jadi tidak bisa dilepas lewat fungsi ini.
+// Hasil: ok | tidak_ada | proyek_tutup.
+function lepas_kru(int $proyek_id, int $anggota_id): string
+{
+    $hasil = sql_transaksi(function () use ($proyek_id, $anggota_id) {
+        $proyek = sql_satu('SELECT kode, status FROM proyek WHERE id = :id FOR UPDATE', ['id' => $proyek_id]);
+        if (!$proyek) {
+            return 'tidak_ada';
+        }
+        if (!proyek_aktif($proyek)) {
+            return 'proyek_tutup';
+        }
+        $hapus = sql_satu('DELETE FROM anggota_proyek WHERE id = :id AND proyek_id = :proyek_id RETURNING pengguna_id',
+            ['id' => $anggota_id, 'proyek_id' => $proyek_id]);
+        if (!$hapus) {
+            return 'tidak_ada';
+        }
+        catat_riwayat_proyek('Tim', $proyek['kode'], nama_pengguna($hapus['pengguna_id']) . ' dilepas dari tim');
+        return 'ok';
+    });
+    if ($hasil === 'ok') {
+        muat_ulang_proyek();
+    }
+    return $hasil;
 }
 
 function kebutuhan_proyek(int $proyek_id): array
@@ -218,7 +430,7 @@ function alokasi_siap(array $alokasi, array $diperiksa): bool
     if (!alokasi_diperiksa($alokasi, $diperiksa) || serah_alokasi($alokasi['id'])) {
         return false;
     }
-    $proyek = db_cari('proyek', (int) $alokasi['proyek_id']);
+    $proyek = cari_proyek((int) $alokasi['proyek_id']);
     if (!$proyek || !proyek_aktif($proyek)) {
         return false;
     }
@@ -232,7 +444,7 @@ function alokasi_siap(array $alokasi, array $diperiksa): bool
 function pemenuhan_kebutuhan(array $kebutuhan): array
 {
     $diperiksa = id_diperiksa((int) $kebutuhan['proyek_id']);
-    $proyek = db_cari('proyek', (int) $kebutuhan['proyek_id']);
+    $proyek = cari_proyek((int) $kebutuhan['proyek_id']);
     $aktif = $proyek && proyek_aktif($proyek);
     $hasil = ['dialokasikan' => 0, 'direncanakan' => 0, 'dikonfirmasi' => 0, 'diperiksa' => 0, 'siap' => 0, 'siap_eksternal' => 0, 'eksternal' => 0,
         'eksternal_keluar' => 0, 'keluar' => 0, 'di_luar' => 0, 'kembali' => 0, 'kembali_bermasalah' => 0];
@@ -593,7 +805,7 @@ function sinkron_konfirmasi_persiapan(): void
         if (empty($rekam['dikonfirmasi_pada'])) {
             continue;
         }
-        $proyek = db_cari('proyek', (int) $rekam['proyek_id']);
+        $proyek = cari_proyek((int) $rekam['proyek_id']);
         if (!$proyek) {
             continue;
         }
@@ -607,22 +819,19 @@ function sinkron_konfirmasi_persiapan(): void
     }
 }
 
-function kode_proyek_baru(): string
-{
-    $maks = 0;
-    foreach (db('proyek') as $proyek) {
-        $maks = max($maks, (int) substr($proyek['kode'], 4));
-    }
-    return 'PRJ-' . str_pad((string) ($maks + 1), 3, '0', STR_PAD_LEFT);
-}
-
+// Validasi sebelum menyimpan; batasnya sama dengan kolom/CHECK di tabel proyek agar galat tampil di form, bukan 503.
 function validasi_proyek(array $data): array
 {
     $galat = [];
     foreach (['nama' => 'Nama proyek', 'klien' => 'Klien', 'lokasi' => 'Lokasi'] as $kunci => $label) {
         if ($data[$kunci] === '') {
             $galat[$kunci] = $label . ' wajib diisi.';
+        } elseif (mb_strlen($data[$kunci]) > 80) {
+            $galat[$kunci] = $label . ' maksimal 80 karakter.';
         }
+    }
+    if (mb_strlen($data['catatan']) > 300) {
+        $galat['catatan'] = 'Catatan maksimal 300 karakter.';
     }
     $mulai = waktu_valid($data['mulai']);
     $selesai = waktu_valid($data['selesai']);
@@ -640,9 +849,9 @@ function validasi_proyek(array $data): array
     } elseif ($mulai && $deadline > $mulai) {
         $galat['deadline_persiapan'] = 'Batas persiapan harus sebelum acara dimulai.';
     }
-    $pic = cari_pengguna((int) $data['pic_id']);
-    if (!$pic || $pic['peran'] !== 'us') {
-        $galat['pic_id'] = 'Pilih PIC dari daftar kru.';
+    $pic = preg_match('/^\d{1,9}$/', $data['pic_id']) ? cari_pengguna((int) $data['pic_id']) : null;
+    if (!$pic || $pic['peran'] !== 'us' || $pic['status'] !== 'Aktif') {
+        $galat['pic_id'] = 'Pilih PIC dari daftar User/Kru yang aktif.';
     }
     if (!in_array($data['status'], daftar_status_proyek(), true)) {
         $galat['status'] = 'Pilih status.';
@@ -671,7 +880,7 @@ function simpan_proyek_dari_form(array $pengguna): void
 {
     wajib_boleh('proyek.kelola');
     $id = (int) input('id');
-    $lama = $id ? db_cari('proyek', $id) : null;
+    $lama = $id ? cari_proyek($id) : null;
     if ($id && !$lama) {
         flash('error', 'Proyek tidak ditemukan.');
         arahkan('pages/proyek.php');
@@ -703,77 +912,45 @@ function simpan_proyek_dari_form(array $pengguna): void
         'pic_id' => (int) $data['pic_id'],
         'catatan' => $data['catatan'],
     ];
+    $pesan_pic = ['pic_id' => 'PIC tidak lagi aktif atau bukan User/Kru. Pilih PIC lain.'];
     if ($lama) {
-        db_ubah('proyek', $id, $isi);
-        atur_pic($id, $isi['pic_id']);
-        $ganti = $lama['status'] !== $isi['status'];
-        catat_riwayat('Proyek', $lama['kode'] . ' · ' . $isi['nama'], $ganti ? 'Status proyek diubah' : 'Detail proyek diperbarui', $ganti ? $lama['status'] : '', $ganti ? $isi['status'] : '');
-        if ((string) $lama['deadline_persiapan'] !== (string) $isi['deadline_persiapan']) {
-            // Sprint 3E: perubahan deadline dicatat eksplisit (lama → baru, format Y-m-d H:i) agar ketepatan waktu konfirmasi
-            // yang terjadi sebelum perubahan tetap dinilai terhadap deadline saat itu.
-            catat_riwayat('Proyek', $lama['kode'] . ' · ' . $isi['nama'], 'Deadline persiapan diubah', (string) $lama['deadline_persiapan'], (string) $isi['deadline_persiapan']);
+        $hasil = ubah_proyek($id, $isi);
+        if ($hasil['status'] === 'tidak_ada') {
+            flash('error', 'Proyek tidak ditemukan.');
+            arahkan('pages/proyek.php');
         }
-        flash('sukses', 'Proyek ' . $lama['kode'] . ' diperbarui.');
+        if ($hasil['status'] === 'pic_tidak_sah') {
+            simpan_form('dialog-proyek', $data + ['id' => $id], $pesan_pic);
+            muat_ulang();
+        }
+        flash('sukses', 'Proyek ' . $hasil['lama']['kode'] . ' diperbarui.');
         muat_ulang();
     }
-    $kode = kode_proyek_baru();
-    $id = db_tambah('proyek', ['kode' => $kode] + $isi + ['dibuat_oleh' => $pengguna['id']]);
-    atur_pic($id, $isi['pic_id']);
-    ambil_persiapan($id);
-    catat_riwayat('Proyek', $kode . ' · ' . $isi['nama'], 'Proyek baru dibuat');
-    flash('sukses', 'Proyek ' . $kode . ' dibuat. Lanjutkan dengan menambah tim dan kebutuhan.');
-    arahkan('pages/proyek-detail.php?id=' . $id);
+    $baru = buat_proyek($isi, (int) $pengguna['id']);
+    if (!$baru) {
+        simpan_form('dialog-proyek', $data + ['id' => ''], $pesan_pic);
+        muat_ulang();
+    }
+    flash('sukses', 'Proyek ' . $baru['kode'] . ' dibuat. Lanjutkan dengan menambah tim dan kebutuhan.');
+    arahkan('pages/proyek-detail.php?id=' . $baru['id']);
 }
 
-function hapus_proyek(int $proyek_id): void
-{
-    foreach (['kebutuhan', 'alokasi', 'anggota_proyek', 'persiapan'] as $tabel) {
-        foreach (db($tabel) as $baris) {
-            if ((int) $baris['proyek_id'] === $proyek_id) {
-                db_hapus($tabel, $baris['id']);
-            }
-        }
-    }
-    db_hapus('proyek', $proyek_id);
-}
-
-function rental_penghalang_hapus(int $proyek_id): array
-{
-    $hasil = ['catatan_vendor' => [], 'komitmen' => []];
-    foreach (db('alokasi') as $alokasi) {
-        if ((int) $alokasi['proyek_id'] !== $proyek_id || $alokasi['sumber'] !== 'Rental') {
-            continue;
-        }
-        if (!empty($alokasi['diterima_pada']) || !empty($alokasi['dikembalikan_vendor_pada'])) {
-            $hasil['catatan_vendor'][] = $alokasi['nama_barang'];
-        } elseif ($alokasi['status'] === 'Dikonfirmasi') {
-            $hasil['komitmen'][] = $alokasi['nama_barang'];
-        }
-    }
-    return $hasil;
-}
-
-function proyek_punya_transaksi(int $proyek_id): bool
-{
-    foreach (db('transaksi') as $trx) {
-        if ((int) $trx['proyek_id'] === $proyek_id) {
-            return true;
-        }
-    }
-    return false;
-}
+// KEBIJAKAN SEMENTARA (sistem hybrid): proyek tidak dihapus permanen. Kebutuhan, alokasi, persiapan, dan serah terima
+// masih disimpan di PHP Session per browser, sehingga keterkaitan proyek di browser lain tidak dapat diverifikasi.
+// Gunakan status Dibatalkan. Ubah ke true hanya setelah modul turunan proyek dimigrasikan ke PostgreSQL.
+const HAPUS_PROYEK_TERSEDIA = false;
 
 function proyek_mendatang(int $hari = 14): array
 {
     $batas = date('Y-m-d', strtotime(HARI_INI . ' +' . $hari . ' days'));
-    $hasil = array_filter(db('proyek'), fn ($p) => proyek_aktif($p) && substr($p['selesai'], 0, 10) >= HARI_INI && substr($p['mulai'], 0, 10) <= $batas);
+    $hasil = array_filter(semua_proyek(), fn ($p) => proyek_aktif($p) && substr($p['selesai'], 0, 10) >= HARI_INI && substr($p['mulai'], 0, 10) <= $batas);
     return urutkan_proyek(array_values($hasil));
 }
 
 function masalah_operasional(): array
 {
     $hasil = [];
-    foreach (db('proyek') as $proyek) {
+    foreach (semua_proyek() as $proyek) {
         if (!proyek_aktif($proyek)) {
             continue;
         }
@@ -805,7 +982,7 @@ function masalah_operasional(): array
             }
             $keluar = alokasi_keluar_unit($unit['id']);
             if ($keluar && (int) $keluar['proyek_id'] !== (int) $proyek['id'] && (HARI_INI > $keluar['tgl_selesai'] || $keluar['tgl_selesai'] >= $alokasi['tgl_mulai'])) {
-                $asal = db_cari('proyek', $keluar['proyek_id']);
+                $asal = cari_proyek($keluar['proyek_id']);
                 $hasil[] = ['tingkat' => 'merah', 'ikon' => 'clock', 'judul' => 'Bentrok: ' . $unit['kode_unit'] . ' belum kembali', 'keterangan' => 'Masih di ' . ($asal['kode'] ?? '?') . ', dibutuhkan ' . $proyek['kode'] . ' mulai ' . tgl($alokasi['tgl_mulai'], 'singkat'), 'tautan' => 'pages/serah-terima.php'];
             }
         }

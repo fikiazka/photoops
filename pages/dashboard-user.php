@@ -13,7 +13,7 @@ $lalu = array_values(array_filter($proyek_saya, fn ($p) => !in_array($p, $akan_d
 $bawaan = [];
 foreach (db('alokasi') as $a) {
     if ($a['sumber'] === 'Milik Kru' && (int) $a['pemilik_id'] === (int) $pengguna['id'] && $a['status'] !== 'Dibatalkan') {
-        $p = db_cari('proyek', $a['proyek_id']);
+        $p = cari_proyek($a['proyek_id']);
         if ($p && proyek_aktif($p)) {
             $bawaan[] = ['alokasi' => $a, 'proyek' => $p];
         }
