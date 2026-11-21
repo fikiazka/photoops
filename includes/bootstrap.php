@@ -32,10 +32,11 @@ if (!isset($_SESSION['db']) || ($_SESSION['db_versi'] ?? 0) !== VERSI_DATA) {
     $_SESSION['db'] = seed_data();
     $_SESSION['db_versi'] = VERSI_DATA;
 }
-// Akun pengguna, kategori, unit inventaris, proyek, dan anggota proyek hanya dibaca dari PostgreSQL;
-// salinannya di data session tidak dipakai.
+// Akun pengguna, kategori, unit inventaris, proyek, anggota proyek, dan preset hanya dibaca dari PostgreSQL;
+// salinannya di data session tidak dipakai. Preset (Sprint 3B) tidak memerlukan kenaikan VERSI_DATA karena tidak ada
+// data session yang menyimpan id preset (kebutuhan dari preset berupa salinan nama/kategori/jumlah).
 unset($_SESSION['db']['pengguna'], $_SESSION['db']['kategori'], $_SESSION['db']['perlengkapan'],
-    $_SESSION['db']['proyek'], $_SESSION['db']['anggota_proyek']);
+    $_SESSION['db']['proyek'], $_SESSION['db']['anggota_proyek'], $_SESSION['db']['preset'], $_SESSION['db']['detail_preset']);
 
 // Sesudah POST yang benar-benar mengubah data, konfirmasi persiapan yang syaratnya tidak lagi terpenuhi dicabut secara terpusat.
 // Perubahan unit dan proyek/tim terjadi di PostgreSQL (tidak mengubah session), jadi ditandai lewat inventaris_berubah()

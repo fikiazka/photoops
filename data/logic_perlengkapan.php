@@ -311,13 +311,9 @@ function cek_unit_untuk_proyek(array $unit, array $proyek): array
     return ['blokir' => '', 'catatan' => $catatan];
 }
 
-function item_preset(int $preset_id): array
-{
-    $hasil = array_values(array_filter(db('detail_preset'), fn ($d) => (int) $d['preset_id'] === $preset_id));
-    usort($hasil, fn ($a, $b) => $a['kategori_id'] <=> $b['kategori_id'] ?: strcmp($a['nama_perlengkapan'], $b['nama_perlengkapan']));
-    return $hasil;
-}
-
+// Stok per nama model: unit Studio aktif (PostgreSQL) dan yang tersedia HARI INI. "Tersedia" = kondisi Baik dan tidak
+// sedang keluar menurut alokasi/serah terima (masih PHP Session, per browser). Ini bukan ketersediaan pada jadwal proyek
+// tertentu: bentrok jadwal alokasi diperiksa per unit saat alokasi (cek_unit_untuk_proyek), dipindah ke PostgreSQL di Sprint 3C.
 function stok_model(): array
 {
     $hasil = [];
