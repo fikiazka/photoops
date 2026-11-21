@@ -8,8 +8,10 @@ Dokumen ini adalah bahan untuk Bab 2.3, Bab 3 (bagian basis data), Bab 4 (bagian
 |---|---|
 | Skema 14 tabel, data contoh, role aplikasi `photoops_si3_app`, database `photoops_si3_dev` | Sudah dibuat dan diuji |
 | Uji struktur, relasi, constraint, kueri, dan pola transaksi bersamaan (di PostgreSQL) | Sudah dijalankan, hasil di Bab 4 |
-| Aplikasi PHP memakai PostgreSQL | **Belum.** Semua modul, termasuk login, masih memakai data session (`$_SESSION['db']`). Kueri di `004_query_photoops.sql` baru disiapkan untuk integrasi |
-| Aturan yang dijaga aplikasi (bentrok jadwal unit, barang keluar sekali, kembali tidak melebihi keluar) | Pola transaksinya sudah diuji di PostgreSQL; **belum diuji end-to-end lewat PHP** |
+| Aplikasi PHP memakai PostgreSQL | **Sebagian (hybrid).** Sudah PostgreSQL: Login & Pengguna (Sprint Backend 1), Kategori & Inventaris Studio (Sprint Backend 2), Proyek & Anggota Proyek (Sprint Backend 3A). Masih PHP Session: Preset, Kebutuhan, Alokasi, Persiapan, Serah Terima, Insiden. Riwayat: aksi Pengguna, Perlengkapan, Proyek, Tim di PostgreSQL, lainnya masih session |
+| Aturan yang dijaga aplikasi (bentrok jadwal unit, barang keluar sekali, kembali tidak melebihi keluar) | Pola transaksinya sudah diuji di PostgreSQL; **belum diuji end-to-end lewat PHP** (menunggu migrasi Alokasi dan Serah Terima) |
+
+Rincian integrasi Proyek & Anggota Proyek ada di bagian [Sprint Backend 3A](#sprint-backend-3a--proyek-dan-anggota-proyek).
 
 File utama di `database/`: `001_schema.sql` (struktur), `002_seed_demo.sql` (data contoh), `004_query_photoops.sql` (7 kueri operasional). File pendukung di `database/pendukung/`: `000_setup.sql` (admin membuat role dan database, sekali), `003_hak_akses.sql` (hak akses role aplikasi, dijalankan setelah 001 dan 002), dan `005_uji_integritas.sql` (uji). Urutan pemasangan: 000 → 001 → 002 → 003.
 
@@ -561,6 +563,61 @@ Cara membaca hasilnya:
 - **Execution time:** waktu nyata kueri dijalankan. Angkanya sedikit berbeda di setiap run.
 
 Pengujian dengan data besar (misalnya 10.000 baris) belum dilakukan. Tangkapan layar untuk laporan diambil dari psql atau pgAdmin masing-masing.
+
+---
+
+## Sprint Backend 3A — Proyek dan Anggota Proyek
+
+### Ruang lingkup
+
+Data proyek, PIC, dan kru dibaca dan ditulis di PostgreSQL (tabel `proyek`, `anggota_proyek`, `persiapan_proyek`, `riwayat_aktivitas`). Skema tidak diubah. Modul yang masih memakai PHP Session (kebutuhan, alokasi, persiapan, serah terima, insiden) tetap menyimpan `proyek_id` dan membaca proyek lewat `semua_proyek()` / `cari_proyek()`, seperti unit Studio pada Sprint Backend 2.
+
+### Aturan yang diterapkan
+
+| Aturan | Penerapan |
+|---|---|
+| PIC disimpan di `proyek.pic_id`, kru di `anggota_proyek` | `peran_di_proyek()` mengembalikan `PIC` bila pengguna = `pic_id`, `Kru` bila ada baris `anggota_proyek`. Daftar tim menampilkan PIC sebagai baris pertama (id 0, bukan baris tabel) |
+| PIC dan kru harus User/Kru (`us`) yang Aktif | Divalidasi di form, lalu dikunci di transaksi dengan `SELECT ... FOR SHARE` pada baris `pengguna` |
+| Ganti PIC | Satu transaksi: `UPDATE proyek`, PIC lama dimasukkan sebagai kru (`ON CONFLICT DO NOTHING`), baris kru milik PIC baru dihapus, riwayat Tim "PIC diganti" |
+| Kru tidak ganda | `UNIQUE (proyek_id, pengguna_id)` + `INSERT ... ON CONFLICT DO NOTHING RETURNING id` |
+| Perubahan tim dan PIC tidak bertabrakan | Setiap operasi mengunci baris proyek dengan `SELECT ... FOR UPDATE` |
+| Kode proyek unik | `nextval('seq_kode_proyek')` → `PRJ-026`, dst. Nomor tidak dipakai ulang |
+| Persiapan 1:1 | Baris `persiapan_proyek` dibuat dalam transaksi yang sama dengan proyek |
+| Proyek Selesai/Dibatalkan | Tim tidak bisa diubah (dicek di backend, bukan hanya tombol yang disembunyikan) |
+| Riwayat | Aksi `Proyek` dan `Tim` ditulis ke `riwayat_aktivitas` dalam transaksi yang sama. Bila pencatatan gagal, perubahan ikut di-ROLLBACK |
+| Hapus permanen proyek | Ditunda (`HAPUS_PROYEK_TERSEDIA = false`) selama turunan proyek masih di session per browser. Gunakan status Dibatalkan |
+| Panjang teks | Nama/klien/lokasi ≤ 80, catatan ≤ 300 (sama dengan kolom), sehingga galat tampil di form, bukan halaman 503 |
+
+### Deadline persiapan dan penilaian Tepat Waktu/Terlambat
+
+Jam aplikasi `sekarang()` memakai tanggal demo `HARI_INI` ditambah jam nyata, sehingga urutan waktu tidak bisa diandalkan antar hari. Karena itu log session dan log PostgreSQL **tidak dibandingkan menurut waktu**:
+
+1. Saat persiapan dikonfirmasi, entri log konfirmasi menyimpan snapshot `deadline` yang berlaku saat itu. Penilaian memakai snapshot ini.
+2. Konfirmasi lama tanpa snapshot memakai nilai `lama` dari perubahan deadline pertama sesudahnya (log session menurut id; log PostgreSQL yang seluruhnya dibuat setelah migrasi 3A).
+3. Status "Lewat deadline" pada halaman proyek selalu memakai deadline terbaru.
+
+Log Proyek dan Tim di PostgreSQL memakai `sekarang()` agar sejajar dengan log Persiapan di session pada halaman Riwayat. Mekanisme tanggal global (`HARI_INI`) tidak diubah.
+
+### Migrasi dari Session
+
+Seed PostgreSQL dan seed session memakai id proyek 1–10 dan id kru yang sama, jadi tidak ada data yang dipindahkan. `VERSI_DATA` dinaikkan menjadi 4: setiap session lama di-seed ulang otomatis agar kebutuhan/alokasi session tidak menunjuk proyek buatan session (id 11 dst.). Proyek yang pernah dibuat di session sebelum migrasi tidak terbawa.
+
+### Pengujian
+
+| Uji | Perintah | Hasil |
+|---|---|---|
+| Integrasi 3A (Q01–Q20, 70 pemeriksaan) | `PHOTOOPS_DB_NAME=photoops_si3_test php tests/uji_proyek.php` | 70 lulus, 0 gagal (dijalankan dua kali berturut-turut) |
+| Sintaks PHP | `php -l` semua berkas | 0 galat |
+| Regresi Inventaris | `PHOTOOPS_DB_NAME=photoops_si3_test php tests/uji_inventaris.php` | **Belum dijalankan.** Uji berhenti sendiri karena database uji tidak lagi berisi 23 unit seed; perlu dibuat ulang dari 001 + 002 + 003 oleh admin PostgreSQL |
+
+`uji_proyek.php` tidak mensyaratkan database uji yang baru dibuat ulang: proyek uji (nama berawalan `UJI3A`) dibuat dan dihapus sendiri, proyek contoh 1–10 hanya dibaca setelah dicek masih sesuai seed. Cakupan: buat/ubah proyek, kode dari sequence saat dibuat bersamaan, validasi, ganti PIC, tambah/lepas kru (termasuk bersamaan), hak akses tiga peran, CSRF, hapus ditunda, rollback, penilaian deadline, kompatibilitas modul session, dan session lama.
+
+### Keterbatasan hybrid yang tersisa
+
+- Kebutuhan, alokasi, persiapan, dan serah terima proyek masih per browser sampai modul tersebut dimigrasikan.
+- Pemeriksaan "kru masih membawa barang Milik Kru" saat kru dilepas hanya melihat alokasi di browser yang sedang dipakai.
+- Mengubah tanggal proyek tidak memperbarui tanggal alokasi yang sudah ada (perilaku lama, ditangani saat migrasi Alokasi).
+- Log Pengguna dan Perlengkapan memakai tanggal nyata, sedangkan log Proyek/Tim/session memakai tanggal demo; urutan di halaman Riwayat antar kedua kelompok ini belum seragam.
 
 ---
 

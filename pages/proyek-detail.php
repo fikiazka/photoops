@@ -2,7 +2,7 @@
 require __DIR__ . '/../includes/bootstrap.php';
 $pengguna = wajib_akses('proyek.lihat');
 
-$proyek = db_cari('proyek', (int) query('id'));
+$proyek = cari_proyek((int) query('id'));
 if (!$proyek || !boleh_lihat_proyek($proyek, $pengguna)) {
     flash('error', 'Proyek tidak ditemukan atau Anda tidak ditugaskan di proyek itu.');
     arahkan('pages/proyek.php');
@@ -20,61 +20,55 @@ if (is_post()) {
 
     if ($aksi === 'hapus_proyek') {
         wajib_boleh('proyek.kelola');
-        if (proyek_punya_transaksi($pid)) {
-            flash('error', 'Proyek ini sudah punya riwayat serah terima. Ubah statusnya menjadi Dibatalkan atau Selesai.');
-            muat_ulang();
+        if (!HAPUS_PROYEK_TERSEDIA) {
+            flash('error', 'Proyek ' . $proyek['kode'] . ' tidak dihapus: data turunannya (kebutuhan, alokasi, persiapan, serah terima) belum dapat diverifikasi menyeluruh. Ubah statusnya menjadi Dibatalkan.');
         }
-        $penghalang = rental_penghalang_hapus($pid);
-        if ($penghalang['catatan_vendor']) {
-            flash('error', 'Proyek ini punya catatan penerimaan/pengembalian rental dari vendor (' . implode(', ', $penghalang['catatan_vendor']) . ') yang harus dipertahankan. Ubah statusnya menjadi Dibatalkan atau Selesai, lalu selesaikan rental lewat Perlengkapan › Barang eksternal.');
-            muat_ulang();
-        }
-        if ($penghalang['komitmen']) {
-            flash('error', 'Proyek ini masih punya rental yang sudah dikonfirmasi vendor (' . implode(', ', $penghalang['komitmen']) . '). Batalkan alokasi rental tersebut terlebih dahulu atau ubah status proyek menjadi Dibatalkan.');
-            muat_ulang();
-        }
-        hapus_proyek($pid);
-        catat_riwayat('Proyek', $proyek['kode'] . ' · ' . $proyek['nama'], 'Proyek dihapus');
-        flash('sukses', 'Proyek ' . $proyek['kode'] . ' dihapus.');
-        arahkan('pages/proyek.php');
+        muat_ulang();
     }
 
     if ($aksi === 'tambah_anggota') {
         wajib_boleh('anggota.kelola');
-        $calon = cari_pengguna((int) input('pengguna_id'));
-        if (!$calon || $calon['peran'] !== 'us' || $calon['status'] !== 'Aktif') {
-            simpan_form('dialog-anggota', [], ['pengguna_id' => 'Pilih user yang aktif.']);
-            muat_ulang();
+        $calon_id = input('pengguna_id');
+        $calon = preg_match('/^\d{1,9}$/', $calon_id) ? cari_pengguna((int) $calon_id) : null;
+        $hasil = $calon ? tambah_kru($pid, (int) $calon['id']) : 'calon_tidak_sah';
+        $galat = [
+            'calon_tidak_sah' => 'Pilih User/Kru yang aktif.',
+            'pic' => ($calon['nama'] ?? '') . ' adalah PIC proyek ini.',
+            'sudah_ada' => ($calon['nama'] ?? '') . ' sudah ada di tim.',
+        ];
+        if (isset($galat[$hasil])) {
+            simpan_form('dialog-anggota', [], ['pengguna_id' => $galat[$hasil]]);
+        } elseif ($hasil === 'proyek_tutup') {
+            flash('error', 'Proyek ' . $proyek['kode'] . ' sudah ditutup. Tim tidak bisa diubah lagi.');
+        } elseif ($hasil === 'ok') {
+            flash('sukses', $calon['nama'] . ' ditambahkan ke tim.');
         }
-        if (peran_di_proyek($pid, $calon['id']) !== '') {
-            simpan_form('dialog-anggota', [], ['pengguna_id' => $calon['nama'] . ' sudah ada di tim.']);
-            muat_ulang();
-        }
-        db_tambah('anggota_proyek', ['proyek_id' => $pid, 'pengguna_id' => $calon['id'], 'peran' => 'Kru']);
-        catat_riwayat('Tim', $proyek['kode'], $calon['nama'] . ' ditambahkan sebagai kru');
-        flash('sukses', $calon['nama'] . ' ditambahkan ke tim.');
         muat_ulang();
     }
 
     if ($aksi === 'lepas_anggota') {
         wajib_boleh('anggota.kelola');
-        $baris = db_cari('anggota_proyek', (int) input('id'));
-        if (!$baris || (int) $baris['proyek_id'] !== $pid) {
+        // Baris PIC di daftar tim ber-id 0 (bukan baris anggota_proyek), jadi tidak ditemukan di sini.
+        $baris = semua_anggota()[(int) input('id')] ?? null;
+        if (!$baris || $baris['proyek_id'] !== $pid) {
+            flash('error', 'Anggota tidak ditemukan di tim proyek ini. PIC diganti lewat Ubah proyek.');
             muat_ulang();
         }
-        if ($baris['peran'] === 'PIC') {
-            flash('error', 'PIC tidak bisa dilepas. Ganti PIC lewat Ubah proyek.');
-            muat_ulang();
-        }
+        // Alokasi Milik Kru masih di PHP Session: pemeriksaan ini hanya melihat data di browser ini.
         foreach (alokasi_proyek($pid, true) as $a) {
-            if ($a['sumber'] === 'Milik Kru' && (int) $a['pemilik_id'] === (int) $baris['pengguna_id']) {
+            if ($a['sumber'] === 'Milik Kru' && (int) $a['pemilik_id'] === $baris['pengguna_id']) {
                 flash('error', nama_pengguna($baris['pengguna_id']) . ' masih tercatat membawa ' . $a['nama_barang'] . '. Hapus atau batalkan alokasinya dulu.');
                 muat_ulang();
             }
         }
-        db_hapus('anggota_proyek', $baris['id']);
-        catat_riwayat('Tim', $proyek['kode'], nama_pengguna($baris['pengguna_id']) . ' dilepas dari tim');
-        flash('sukses', nama_pengguna($baris['pengguna_id']) . ' dilepas dari tim.');
+        $hasil = lepas_kru($pid, $baris['id']);
+        if ($hasil === 'ok') {
+            flash('sukses', nama_pengguna($baris['pengguna_id']) . ' dilepas dari tim.');
+        } elseif ($hasil === 'proyek_tutup') {
+            flash('error', 'Proyek ' . $proyek['kode'] . ' sudah ditutup. Tim tidak bisa diubah lagi.');
+        } else {
+            flash('error', 'Anggota sudah tidak ada di tim proyek ini.');
+        }
         muat_ulang();
     }
 
@@ -369,7 +363,7 @@ if (is_post()) {
             $rekam = ambil_persiapan($pid);
             $s = $nilai_p['syarat'];
             db_ubah('persiapan', (int) $rekam['id'], ['dikonfirmasi_pada' => date('Y-m-d H:i', strtotime(sekarang())), 'dikonfirmasi_oleh' => $pengguna['id']]);
-            catat_riwayat('Persiapan', $proyek['kode'], 'Persiapan dikonfirmasi selesai · ' . $s['kebutuhan'] . ' kebutuhan, ' . $s['memenuhi'] . ' alokasi (Studio ' . $s['unit_sumber']['Studio'] . ', Rental ' . $s['unit_sumber']['Rental'] . ', Milik Kru ' . $s['unit_sumber']['Milik Kru'] . ' unit)', 'Siap untuk Dikonfirmasi', 'Dikonfirmasi Selesai');
+            catat_riwayat('Persiapan', $proyek['kode'], 'Persiapan dikonfirmasi selesai · ' . $s['kebutuhan'] . ' kebutuhan, ' . $s['memenuhi'] . ' alokasi (Studio ' . $s['unit_sumber']['Studio'] . ', Rental ' . $s['unit_sumber']['Rental'] . ', Milik Kru ' . $s['unit_sumber']['Milik Kru'] . ' unit)', 'Siap untuk Dikonfirmasi', 'Dikonfirmasi Selesai', ['deadline' => $proyek['deadline_persiapan']]);
             flash('sukses', 'Persiapan ' . $proyek['kode'] . ' dikonfirmasi selesai. Barang belum tercatat keluar; catat penyerahan barang di Serah Terima saat barang dibawa.');
             muat_ulang();
         }
@@ -441,7 +435,7 @@ require ROOT . '/includes/layout_head.php';
 <?php if (boleh('proyek.kelola')): ?>
 <div class="kepala-aksi">
 <?= tombol_modal('dialog-proyek', 'Ubah proyek', data_form_proyek($proyek), 'pencil', 'btn btn-sekunder') ?>
-<?= tombol_konfirmasi(['label' => 'Hapus', 'ikon' => 'trash-2', 'aksi' => 'hapus_proyek', 'id' => $pid, 'judul' => 'Hapus proyek ' . $proyek['kode'] . '?', 'pesan' => 'Kebutuhan, tim, alokasi, dan persiapan proyek ini ikut terhapus. Proyek yang sudah punya serah terima, rental yang dikonfirmasi vendor, atau catatan rental vendor tidak bisa dihapus.', 'tombol' => 'Hapus proyek', 'kelas' => 'btn btn-sekunder']) ?>
+<?= tombol_konfirmasi(['label' => 'Hapus', 'ikon' => 'trash-2', 'aksi' => 'hapus_proyek', 'id' => $pid, 'judul' => 'Hapus proyek ' . $proyek['kode'] . '?', 'pesan' => 'Selama data kebutuhan, alokasi, dan persiapan proyek masih tersimpan per browser, proyek tidak dihapus permanen. Proyek yang tidak jadi dilaksanakan sebaiknya diubah statusnya menjadi Dibatalkan.', 'tombol' => 'Hapus proyek', 'kelas' => 'btn btn-sekunder']) ?>
 </div>
 <?php endif; ?>
 </div>

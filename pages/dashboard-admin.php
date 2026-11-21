@@ -10,7 +10,7 @@ if (is_post()) {
     muat_ulang();
 }
 
-$proyek_semua = db('proyek');
+$proyek_semua = semua_proyek();
 $proyek_jalan = array_filter($proyek_semua, fn ($p) => in_array($p['status'], ['Dijadwalkan', 'Berlangsung'], true));
 $proyek_draf = array_filter($proyek_semua, fn ($p) => $p['status'] === 'Draf');
 $di_proyek = ringkasan_barang_proyek();

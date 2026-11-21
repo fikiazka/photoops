@@ -58,6 +58,7 @@ $judul_proyek = lama('id') !== '' ? 'Ubah proyek' : 'Proyek baru';
 </div>
 <div class="bidang">
 <label for="proyek-catatan">Catatan <span class="redup">(opsional)</span></label>
-<textarea id="proyek-catatan" name="catatan" maxlength="300"><?= e(lama('catatan')) ?></textarea>
+<textarea id="proyek-catatan" name="catatan" maxlength="300"<?= attr_galat('catatan') ?>><?= e(lama('catatan')) ?></textarea>
+<?= pesan_galat('catatan') ?>
 </div>
 <?= dialog_tutup('Simpan proyek') ?>

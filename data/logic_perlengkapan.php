@@ -297,7 +297,7 @@ function cek_unit_untuk_proyek(array $unit, array $proyek): array
     [$mulai, $selesai] = rentang_alokasi($proyek);
     $catatan = '';
     foreach (alokasi_aktif_unit($unit['id']) as $alokasi) {
-        $lain = db_cari('proyek', $alokasi['proyek_id']);
+        $lain = cari_proyek($alokasi['proyek_id']);
         if ((int) $alokasi['proyek_id'] === (int) $proyek['id']) {
             return ['blokir' => 'Sudah dipakai di proyek ini', 'catatan' => ''];
         }
@@ -451,7 +451,7 @@ function daftar_barang_eksternal(): array
         }
         $pid = (int) $alokasi['proyek_id'];
         $diperiksa[$pid] = $diperiksa[$pid] ?? id_diperiksa($pid);
-        $proyek = db_cari('proyek', $pid);
+        $proyek = cari_proyek($pid);
         $hasil[] = [
             'alokasi' => $alokasi,
             'proyek' => $proyek,
@@ -571,7 +571,7 @@ function proses_aksi_rental(string $aksi, array $alokasi, array $pengguna): arra
     $nama = $alokasi['nama_barang'] . ' (' . $alokasi['vendor'] . ')';
     $kini = date('Y-m-d H:i', strtotime(sekarang()));
     $jumlah = jumlah_alokasi($alokasi);
-    $label = $alokasi['nama_barang'] . ' · ' . (db_cari('proyek', (int) $alokasi['proyek_id'])['kode'] ?? '?');
+    $label = $alokasi['nama_barang'] . ' · ' . (cari_proyek((int) $alokasi['proyek_id'])['kode'] ?? '?');
 
     if ($aksi === 'terima_rental' || $aksi === 'kembalikan_vendor') {
         $terima = $aksi === 'terima_rental';
@@ -581,7 +581,7 @@ function proses_aksi_rental(string $aksi, array $alokasi, array $pengguna): arra
         if (!$terima && $info['dipakai_proyek']) {
             $serah = serah_alokasi((int) $alokasi['id']);
             $trx = db_cari('transaksi', $serah['trx_keluar'] ?? 0);
-            return ['umum' => $nama . ' masih tercatat digunakan proyek ' . (db_cari('proyek', (int) $alokasi['proyek_id'])['kode'] ?? '?') . ' (barang keluar ' . ($trx['kode'] ?? '?') . ', ' . tgl($serah['keluar'], 'lengkap') . '): ' . (int) ($serah['sisa'] ?? 0) . ' dari ' . (int) ($serah['jumlah_keluar'] ?? 0) . ' unit belum kembali dari proyek. Catat pengembalian dari proyek terlebih dahulu di Serah Terima; pengembalian ke vendor baru bisa setelah seluruh unit kembali.'];
+            return ['umum' => $nama . ' masih tercatat digunakan proyek ' . (cari_proyek((int) $alokasi['proyek_id'])['kode'] ?? '?') . ' (barang keluar ' . ($trx['kode'] ?? '?') . ', ' . tgl($serah['keluar'], 'lengkap') . '): ' . (int) ($serah['sisa'] ?? 0) . ' dari ' . (int) ($serah['jumlah_keluar'] ?? 0) . ' unit belum kembali dari proyek. Catat pengembalian dari proyek terlebih dahulu di Serah Terima; pengembalian ke vendor baru bisa setelah seluruh unit kembali.'];
         }
         if (!$terima && !$info['bisa_kembali']) {
             return ['umum' => $info['dikembalikan'] ? $nama . ' sudah tercatat dikembalikan ke vendor pada ' . tgl($alokasi['dikembalikan_vendor_pada'], 'lengkap') . '.' : $nama . ' belum tercatat diterima dari vendor, jadi belum bisa dikembalikan.'];

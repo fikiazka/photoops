@@ -6,7 +6,7 @@ foreach (semua_perlengkapan() as $u) {
     $opsi_unit[$u['id']] = label_unit($u) . ' · ' . $u['kondisi'];
 }
 $opsi_proyek_insiden = [];
-foreach (urutkan_proyek(array_values(db('proyek'))) as $p) {
+foreach (urutkan_proyek(array_values(semua_proyek())) as $p) {
     $opsi_proyek_insiden[$p['id']] = $p['kode'] . ' · ' . $p['nama'];
 }
 ?>

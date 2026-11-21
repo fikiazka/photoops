@@ -39,7 +39,7 @@ judul_halaman('Halo, ' . nama_depan($pengguna['nama']), tgl(HARI_INI, 'panjang')
 <?php else: ?>
 <ul class="daftar">
 <?php foreach ($belum_kembali as $b): ?>
-<?php $p = db_cari('proyek', $b['alokasi']['proyek_id']); ?>
+<?php $p = cari_proyek($b['alokasi']['proyek_id']); ?>
 <li class="daftar-baris">
 <span class="ikon-bulat ikon-abu"><?= ikon('package', 16) ?></span>
 <div class="daftar-utama">

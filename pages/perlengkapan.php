@@ -84,7 +84,7 @@ if (is_post()) {
             simpan_form('dialog-insiden', $data, $galat);
             muat_ulang();
         }
-        $proyek_insiden = db_cari('proyek', (int) $data['proyek_id']) ? (int) $data['proyek_id'] : null;
+        $proyek_insiden = cari_proyek((int) $data['proyek_id']) ? (int) $data['proyek_id'] : null;
         try {
             $kode = proses_session_dan_inventaris(fn () => lapor_insiden((int) $data['perlengkapan_id'], $proyek_insiden, $data['jenis'], $data['deskripsi'], $data['kondisi']));
         } catch (Throwable $e) {
@@ -127,7 +127,7 @@ if (is_post()) {
     if (isset($modal_rental[$aksi])) {
         wajib_boleh('rental.kelola');
         $a = db_cari('alokasi', (int) input('id'));
-        $pr = $a ? db_cari('proyek', (int) $a['proyek_id']) : null;
+        $pr = $a ? cari_proyek((int) $a['proyek_id']) : null;
         if (!$a || !$pr || input('proyek_id') !== (string) $a['proyek_id']) {
             flash('error', 'Alokasi rental tidak ditemukan pada proyek tersebut.');
             muat_ulang();
@@ -418,10 +418,10 @@ $berikut = jadwal_berikutnya($u['id']);
 <td data-label="Pemakaian">
 <?= badge($status) ?>
 <?php if ($keluar): ?>
-<?php $pk = db_cari('proyek', $keluar['proyek_id']); ?>
+<?php $pk = cari_proyek($keluar['proyek_id']); ?>
 <div class="kecil redup" data-unit-di-proyek>Masih di <?= e($pk['kode'] ?? '?') ?> · jadwal selesai <?= e(tgl($keluar['tgl_selesai'], 'singkat')) ?></div>
 <?php elseif ($berikut): ?>
-<?php $pb = db_cari('proyek', $berikut['proyek_id']); ?>
+<?php $pb = cari_proyek($berikut['proyek_id']); ?>
 <div class="kecil redup">Berikutnya <?= e($pb['kode'] ?? '?') ?> · <?= e(rentang_tgl($berikut['tgl_mulai'], $berikut['tgl_selesai'])) ?></div>
 <?php endif; ?>
 </td>
@@ -456,7 +456,7 @@ $berikut = jadwal_berikutnya($u['id']);
 <thead><tr><th>Insiden</th><th>Unit</th><th>Deskripsi</th><th>Status</th><?= boleh('insiden.kelola') ? '<th><span class="sr">Aksi</span></th>' : '' ?></tr></thead>
 <tbody>
 <?php foreach ($insiden as $i): ?>
-<?php $u = cari_perlengkapan((int) $i['perlengkapan_id']); $p = $i['proyek_id'] ? db_cari('proyek', (int) $i['proyek_id']) : null; ?>
+<?php $u = cari_perlengkapan((int) $i['perlengkapan_id']); $p = $i['proyek_id'] ? cari_proyek((int) $i['proyek_id']) : null; ?>
 <tr>
 <td data-label="Insiden"><strong><?= e($i['kode']) ?></strong><div class="kecil redup"><?= e($i['jenis']) ?> · <?= e(tgl($i['waktu'], 'singkat_jam')) ?></div></td>
 <td data-label="Unit"><?= e(label_unit($u)) ?><div class="kecil redup"><?= $p ? e($p['kode']) . ' · ' : '' ?>dilapor <?= e(nama_pengguna($i['pelapor_id'])) ?></div></td>

@@ -6,7 +6,7 @@ if (is_post()) {
     cek_csrf();
     wajib_boleh('serah_terima.kelola');
     $aksi = input('aksi');
-    $proyek = db_cari('proyek', (int) input('proyek_id'));
+    $proyek = cari_proyek((int) input('proyek_id'));
     if (!$proyek) {
         flash('error', 'Proyek tidak ditemukan.');
         muat_ulang();
