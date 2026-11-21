@@ -8,10 +8,10 @@ Dokumen ini adalah bahan untuk Bab 2.3, Bab 3 (bagian basis data), Bab 4 (bagian
 |---|---|
 | Skema 14 tabel, data contoh, role aplikasi `photoops_si3_app`, database `photoops_si3_dev` | Sudah dibuat dan diuji |
 | Uji struktur, relasi, constraint, kueri, dan pola transaksi bersamaan (di PostgreSQL) | Sudah dijalankan, hasil di Bab 4 |
-| Aplikasi PHP memakai PostgreSQL | **Sebagian (hybrid).** Sudah PostgreSQL: Login & Pengguna (Sprint Backend 1), Kategori & Inventaris Studio (Sprint Backend 2), Proyek & Anggota Proyek (Sprint Backend 3A). Masih PHP Session: Preset, Kebutuhan, Alokasi, Persiapan, Serah Terima, Insiden. Riwayat: aksi Pengguna, Perlengkapan, Proyek, Tim di PostgreSQL, lainnya masih session |
+| Aplikasi PHP memakai PostgreSQL | **Sebagian (hybrid).** Sudah PostgreSQL: Login & Pengguna (Sprint Backend 1), Kategori & Inventaris Studio (Sprint Backend 2), Proyek & Anggota Proyek (Sprint Backend 3A), Preset & Item Preset (Sprint Backend 3B). Masih PHP Session: Kebutuhan, Alokasi, Persiapan, Serah Terima, Insiden. Riwayat: aksi Pengguna, Perlengkapan, Proyek, Tim, Preset di PostgreSQL, lainnya masih session |
 | Aturan yang dijaga aplikasi (bentrok jadwal unit, barang keluar sekali, kembali tidak melebihi keluar) | Pola transaksinya sudah diuji di PostgreSQL; **belum diuji end-to-end lewat PHP** (menunggu migrasi Alokasi dan Serah Terima) |
 
-Rincian integrasi Proyek & Anggota Proyek ada di bagian [Sprint Backend 3A](#sprint-backend-3a--proyek-dan-anggota-proyek).
+Rincian integrasi Proyek & Anggota Proyek ada di bagian [Sprint Backend 3A](#sprint-backend-3a--proyek-dan-anggota-proyek), Preset di bagian [Sprint Backend 3B](#sprint-backend-3b--preset-perlengkapan-dan-item-preset).
 
 File utama di `database/`: `001_schema.sql` (struktur), `002_seed_demo.sql` (data contoh), `004_query_photoops.sql` (7 kueri operasional). File pendukung di `database/pendukung/`: `000_setup.sql` (admin membuat role dan database, sekali), `003_hak_akses.sql` (hak akses role aplikasi, dijalankan setelah 001 dan 002), dan `005_uji_integritas.sql` (uji). Urutan pemasangan: 000 → 001 → 002 → 003.
 
@@ -618,6 +618,51 @@ Seed PostgreSQL dan seed session memakai id proyek 1–10 dan id kru yang sama, 
 - Pemeriksaan "kru masih membawa barang Milik Kru" saat kru dilepas hanya melihat alokasi di browser yang sedang dipakai.
 - Mengubah tanggal proyek tidak memperbarui tanggal alokasi yang sudah ada (perilaku lama, ditangani saat migrasi Alokasi).
 - Log Pengguna dan Perlengkapan memakai tanggal nyata, sedangkan log Proyek/Tim/session memakai tanggal demo; urutan di halaman Riwayat antar kedua kelompok ini belum seragam.
+
+## Sprint Backend 3B — Preset Perlengkapan dan Item Preset
+
+### Ruang lingkup
+
+Preset dan isinya dibaca dan ditulis di PostgreSQL (tabel `preset_perlengkapan`, `detail_preset`, `riwayat_aktivitas`) lewat `data/logic_preset.php`. Skema tidak diubah. Item preset merujuk ke **nama model** (teks) dan kategori, bukan ke unit tertentu. "Isi dari preset" di detail proyek menyalin item preset menjadi kebutuhan proyek (kebutuhan masih di session); tidak ada foreign key dari kebutuhan ke preset.
+
+### Aturan yang diterapkan
+
+| Aturan | Penerapan |
+|---|---|
+| Hak akses | Lihat dan kelola: Super Admin dan Petugas Inventaris (`preset.lihat`, `preset.kelola`). User/Kru ditolak, termasuk lewat POST langsung. Semua POST memakai CSRF |
+| Nama preset unik, tanpa membedakan huruf besar/kecil | Dicek dengan `LOWER(nama)` di dalam transaksi setelah `LOCK TABLE preset_perlengkapan IN SHARE ROW EXCLUSIVE MODE`, sehingga dua browser tidak bisa menyimpan nama yang sama bersamaan. `UNIQUE (nama)` di skema tetap menjadi pengaman terakhir |
+| Panjang teks | Nama 3–50, deskripsi ≤ 160, nama model 2–60 (sama dengan kolom) |
+| Jumlah item | Bilangan bulat 1–20 (`CHECK` di `detail_preset`); `0`, negatif, desimal, dan teks ditolak di form |
+| Kategori item | Harus ada di `kategori_perlengkapan`. Model yang ada di Inventaris Studio otomatis memakai kategori unitnya |
+| Model tidak ganda dalam satu preset | Dicek `LOWER(nama_perlengkapan)` setelah baris preset dikunci (`SELECT ... FOR UPDATE`). Model yang sama boleh ada di preset lain (`UNIQUE (preset_id, nama_perlengkapan)`) |
+| Item milik preset yang benar | Preset tujuan dikirim form (`preset_id`). Preset yang tidak ada atau item milik preset lain ditolak, tidak lagi jatuh ke preset yang tampil pertama |
+| Transaksi | Item, `diubah_pada` preset, dan riwayat `Preset` tersimpan dalam satu transaksi. Bila pencatatan riwayat gagal, semuanya di-ROLLBACK |
+| Hapus preset | Diizinkan (permanen). Itemnya ikut terhapus (`ON DELETE CASCADE`); kebutuhan proyek yang dulu diisi dari preset tetap utuh karena berupa salinan |
+| Pembuat preset | `dibuat_oleh` diisi pengguna yang membuat, ditampilkan di detail preset. Akun pembuat preset tidak bisa dihapus (sudah dicek di Manajemen Pengguna) |
+
+### Pemeriksaan stok preset
+
+Kolom "Stok studio" dihitung dari unit Studio **aktif** di PostgreSQL per nama model (`total`), dan unit yang **tersedia hari ini** (`tersedia`: kondisi Baik dan tidak sedang keluar). Status "sedang keluar" masih dibaca dari alokasi/serah terima di session browser yang sedang dipakai. Angka ini **bukan** ketersediaan pada jadwal proyek tertentu: bentrok jadwal tetap diperiksa per unit saat alokasi (`cek_unit_untuk_proyek`) dan baru akan akurat lintas browser setelah Alokasi dimigrasikan (Sprint 3C). Halaman Preset menuliskan hal ini di bawah tabel.
+
+### Migrasi dari Session
+
+Seed PostgreSQL dan seed session memakai preset 1–4 dan item 1–21 yang sama. Tidak ada data session yang menyimpan id preset, sehingga `VERSI_DATA` **tidak** dinaikkan; salinan `preset`/`detail_preset` di session cukup dibuang di `bootstrap.php`. Preset yang pernah dibuat di session sebuah browser sebelum 3B tidak terbawa (kebutuhan yang dulu diisi darinya tetap ada).
+
+### Pengujian
+
+| Uji | Perintah | Hasil |
+|---|---|---|
+| Integrasi 3B (T01–T18, 75 pemeriksaan) | `PHOTOOPS_DB_NAME=photoops_si3_test php tests/uji_preset.php` | 75 lulus, 0 gagal (dua kali berturut-turut) |
+| Regresi 3A | `PHOTOOPS_DB_NAME=photoops_si3_test php tests/uji_proyek.php` | 70 lulus, 0 gagal |
+| Sintaks PHP | `php -l` semua berkas | 0 galat |
+| Regresi Inventaris | `PHOTOOPS_DB_NAME=photoops_si3_test php tests/uji_inventaris.php` | **Belum dijalankan** (alasan sama dengan 3A: database uji perlu dibuat ulang dari 001 + 002 + 003) |
+
+`uji_preset.php` membuat dan menghapus sendiri preset berawalan `UJI3B`; preset contoh 1–4 hanya dibaca setelah dicek masih sesuai seed. Cakupan: baca dari PostgreSQL, tambah/ubah/hapus preset dan item, validasi jumlah dan relasi, duplikasi (termasuk dua proses bersamaan), rollback, hak akses, CSRF, lintas browser, isi kebutuhan dari preset, stok, session lama, riwayat, tampilan halaman, login, dan halaman ketiga peran.
+
+### Keterbatasan hybrid yang tersisa
+
+- Ketersediaan stok di halaman Preset bergantung pada alokasi di session browser yang sedang dipakai, dan belum memperhitungkan jadwal (Sprint 3C).
+- Kebutuhan hasil "Isi dari preset" masih tersimpan per browser sampai Kebutuhan dimigrasikan.
 
 ---
 

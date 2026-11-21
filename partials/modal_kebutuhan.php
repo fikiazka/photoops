@@ -2,9 +2,8 @@
 defined('ROOT') || exit;
 
 $opsi_preset = [];
-foreach (db('preset') as $preset_opsi) {
-    $jumlah_item = count(array_filter(db('detail_preset'), fn ($d) => (int) $d['preset_id'] === (int) $preset_opsi['id']));
-    $opsi_preset[$preset_opsi['id']] = $preset_opsi['nama'] . ' · ' . $jumlah_item . ' item';
+foreach (semua_preset() as $preset_opsi) {
+    $opsi_preset[$preset_opsi['id']] = $preset_opsi['nama'] . ' · ' . count(item_preset($preset_opsi['id'])) . ' item';
 }
 ?>
 <?= dialog_buka('dialog-kebutuhan', lama('id') !== '' ? 'Ubah kebutuhan' : 'Tambah kebutuhan', 'Barang yang dibutuhkan proyek, sebelum dialokasikan.') ?>

@@ -2,107 +2,86 @@
 require __DIR__ . '/../includes/bootstrap.php';
 $pengguna = wajib_akses('preset.lihat');
 
-$daftar = array_values(db('preset'));
+// Preset dan itemnya dibaca dari PostgreSQL (data/logic_preset.php).
+$daftar = array_values(semua_preset());
 usort($daftar, fn ($a, $b) => strcmp($a['nama'], $b['nama']));
-$terpilih = db_cari('preset', (int) query('id')) ?? ($daftar[0] ?? null);
+$terpilih = cari_preset(query('id')) ?? ($daftar[0] ?? null);
 
 if (is_post()) {
     cek_csrf();
     wajib_boleh('preset.kelola');
     $aksi = input('aksi');
-    $waktu = date('Y-m-d H:i', strtotime(sekarang()));
 
     if ($aksi === 'simpan_preset') {
-        $id = (int) input('id');
+        $id = preg_match('/^\d{1,9}$/', input('id')) ? (int) input('id') : 0;
         $data = ['id' => $id ?: '', 'nama' => input('nama'), 'deskripsi' => input('deskripsi')];
-        $galat = [];
-        if (mb_strlen($data['nama']) < 3) {
-            $galat['nama'] = 'Nama preset minimal 3 karakter.';
-        }
-        foreach (db('preset') as $p) {
-            if ((int) $p['id'] !== $id && mb_strtolower($p['nama']) === mb_strtolower($data['nama'])) {
-                $galat['nama'] = 'Nama preset sudah dipakai.';
-            }
+        $galat = validasi_preset($data);
+        $hasil = $galat ? null : simpan_preset($id, ['nama' => $data['nama'], 'deskripsi' => $data['deskripsi']], (int) $pengguna['id']);
+        if ($hasil && $hasil['status'] === 'nama_dipakai') {
+            $galat['nama'] = 'Nama preset sudah dipakai.';
         }
         if ($galat) {
             simpan_form('dialog-preset', $data, $galat);
             muat_ulang();
         }
-        if ($id && db_cari('preset', $id)) {
-            db_ubah('preset', $id, ['nama' => $data['nama'], 'deskripsi' => $data['deskripsi'], 'diubah_pada' => $waktu]);
-            catat_riwayat('Preset', $data['nama'], 'Preset diperbarui');
-            flash('sukses', 'Preset ' . $data['nama'] . ' diperbarui.');
-            muat_ulang();
+        if ($hasil['status'] === 'tidak_ada') {
+            flash('error', 'Preset tidak ditemukan. Mungkin sudah dihapus pengguna lain.');
+            arahkan('pages/preset.php');
         }
-        $baru = db_tambah('preset', ['nama' => $data['nama'], 'deskripsi' => $data['deskripsi'], 'dibuat_oleh' => $pengguna['id'], 'diubah_pada' => $waktu]);
-        catat_riwayat('Preset', $data['nama'], 'Preset baru dibuat');
-        flash('sukses', 'Preset ' . $data['nama'] . ' dibuat. Tambahkan item di dalamnya.');
-        arahkan('pages/preset.php?id=' . $baru);
+        if ($hasil['baru']) {
+            flash('sukses', 'Preset ' . $data['nama'] . ' dibuat. Tambahkan item di dalamnya.');
+        } else {
+            flash('sukses', 'Preset ' . $data['nama'] . ' diperbarui.');
+        }
+        arahkan('pages/preset.php?id=' . $hasil['id']);
     }
 
     if ($aksi === 'hapus_preset') {
-        $p = db_cari('preset', (int) input('id'));
-        if ($p) {
-            foreach (item_preset($p['id']) as $item) {
-                db_hapus('detail_preset', $item['id']);
-            }
-            db_hapus('preset', $p['id']);
-            catat_riwayat('Preset', $p['nama'], 'Preset dihapus');
-            flash('sukses', 'Preset ' . $p['nama'] . ' dihapus.');
+        $nama = hapus_preset((int) input('id'));
+        if ($nama !== null) {
+            flash('sukses', 'Preset ' . $nama . ' dihapus.');
         }
         arahkan('pages/preset.php');
     }
 
     if ($aksi === 'simpan_item') {
-        if (!$terpilih) {
-            muat_ulang();
-        }
-        $id = (int) input('id');
+        // Preset tujuan dikirim form (bukan preset yang kebetulan tampil pertama), agar item tidak masuk ke preset lain.
+        $preset_id = (int) (input('preset_id') !== '' ? input('preset_id') : query('id'));
+        $id = preg_match('/^\d{1,9}$/', input('id')) ? (int) input('id') : 0;
         $data = ['id' => $id ?: '', 'nama_perlengkapan' => input('nama_perlengkapan'), 'kategori_id' => input('kategori_id'), 'jumlah' => input('jumlah')];
         $stok = stok_model();
         if (isset($stok[$data['nama_perlengkapan']])) {
             $data['kategori_id'] = (string) $stok[$data['nama_perlengkapan']]['kategori_id'];
         }
-        $galat = [];
-        if (mb_strlen($data['nama_perlengkapan']) < 2) {
-            $galat['nama_perlengkapan'] = 'Isi model barang.';
-        }
-        if (!cari_kategori((int) $data['kategori_id'])) {
+        $galat = validasi_item_preset($data);
+        $hasil = $galat ? null : simpan_item_preset($preset_id, $id,
+            ['nama_perlengkapan' => $data['nama_perlengkapan'], 'kategori_id' => (int) $data['kategori_id'], 'jumlah' => (int) $data['jumlah']]);
+        if ($hasil && $hasil['status'] === 'duplikat') {
+            $galat['nama_perlengkapan'] = 'Model ini sudah ada di preset. Ubah jumlahnya saja.';
+        } elseif ($hasil && $hasil['status'] === 'kategori_tidak_ada') {
             $galat['kategori_id'] = 'Pilih kategori.';
-        }
-        if ((int) $data['jumlah'] < 1 || (int) $data['jumlah'] > 20) {
-            $galat['jumlah'] = 'Jumlah 1 sampai 20.';
-        }
-        foreach (item_preset($terpilih['id']) as $item) {
-            if ((int) $item['id'] !== $id && mb_strtolower($item['nama_perlengkapan']) === mb_strtolower($data['nama_perlengkapan'])) {
-                $galat['nama_perlengkapan'] = 'Model ini sudah ada di preset. Ubah jumlahnya saja.';
-            }
         }
         if ($galat) {
             simpan_form('dialog-item-preset', $data, $galat);
             muat_ulang();
         }
-        $isi = ['nama_perlengkapan' => $data['nama_perlengkapan'], 'kategori_id' => (int) $data['kategori_id'], 'jumlah' => (int) $data['jumlah']];
-        $item_lama = $id ? db_cari('detail_preset', $id) : null;
-        if ($item_lama && (int) $item_lama['preset_id'] === (int) $terpilih['id']) {
-            db_ubah('detail_preset', $id, $isi);
-            catat_riwayat('Preset', $terpilih['nama'], $isi['nama_perlengkapan'] . ' diperbarui', (string) $item_lama['jumlah'], (string) $isi['jumlah']);
-        } else {
-            db_tambah('detail_preset', ['preset_id' => $terpilih['id']] + $isi);
-            catat_riwayat('Preset', $terpilih['nama'], $isi['nama_perlengkapan'] . ' × ' . $isi['jumlah'] . ' ditambahkan');
+        if ($hasil['status'] === 'preset_tidak_ada') {
+            flash('error', 'Preset tidak ditemukan. Mungkin sudah dihapus pengguna lain.');
+            arahkan('pages/preset.php');
         }
-        db_ubah('preset', $terpilih['id'], ['diubah_pada' => $waktu]);
-        flash('sukses', 'Item ' . $isi['nama_perlengkapan'] . ' disimpan di ' . $terpilih['nama'] . '.');
-        muat_ulang();
+        if ($hasil['status'] === 'item_tidak_ada') {
+            flash('error', 'Item tidak ditemukan di preset ' . $hasil['preset'] . '. Mungkin sudah dihapus pengguna lain.');
+        } else {
+            flash('sukses', 'Item ' . $data['nama_perlengkapan'] . ' disimpan di ' . $hasil['preset'] . '.');
+        }
+        arahkan('pages/preset.php?id=' . $preset_id);
     }
 
     if ($aksi === 'hapus_item') {
-        $item = db_cari('detail_preset', (int) input('id'));
-        if ($item && $terpilih && (int) $item['preset_id'] === (int) $terpilih['id']) {
-            db_hapus('detail_preset', $item['id']);
-            db_ubah('preset', $terpilih['id'], ['diubah_pada' => $waktu]);
-            catat_riwayat('Preset', $terpilih['nama'], $item['nama_perlengkapan'] . ' dihapus dari preset');
-            flash('sukses', $item['nama_perlengkapan'] . ' dihapus dari ' . $terpilih['nama'] . '.');
+        $hasil = hapus_item_preset((int) input('id'));
+        if ($hasil) {
+            flash('sukses', $hasil['item']['nama_perlengkapan'] . ' dihapus dari ' . $hasil['preset'] . '.');
+            arahkan('pages/preset.php?id=' . $hasil['preset_id']);
         }
         muat_ulang();
     }
@@ -193,7 +172,7 @@ if (!$s) {
 </table>
 </div>
 <div class="kartu-kaki">
-<p class="kecil redup">Total <?= array_sum(array_column($item, 'jumlah')) ?> unit dari <?= count($item) ?> model. Stok dihitung dari unit yang tersedia hari ini.</p>
+<p class="kecil redup">Total <?= array_sum(array_column($item, 'jumlah')) ?> unit dari <?= count($item) ?> model. Stok dihitung dari unit yang tersedia hari ini, belum memperhitungkan jadwal proyek lain.</p>
 <?php if ($perlu_rental || $kurang): ?>
 <p class="kecil teks-kuning"><?= $perlu_rental ? $perlu_rental . ' model perlu rental' : '' ?><?= $perlu_rental && $kurang ? ' · ' : '' ?><?= $kurang ? $kurang . ' model stoknya kurang' : '' ?></p>
 <?php endif; ?>

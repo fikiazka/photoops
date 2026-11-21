@@ -62,8 +62,14 @@ function catat_riwayat_perlengkapan(string $objek, string $keterangan, string $l
     ]);
 }
 
+// Audit Preset (Sprint Backend 3B), di dalam transaksi yang sama dengan perubahan preset/itemnya.
+function catat_riwayat_preset(string $objek, string $keterangan, string $lama = '', string $baru = ''): void
+{
+    catat_riwayat_proyek('Preset', $objek, $keterangan, $lama, $baru);
+}
+
 // Aksi riwayat yang sumbernya PostgreSQL. Aksi lain masih dari log session.
-const AKSI_RIWAYAT_DB = ['Pengguna', 'Perlengkapan', 'Proyek', 'Tim'];
+const AKSI_RIWAYAT_DB = ['Pengguna', 'Perlengkapan', 'Proyek', 'Tim', 'Preset'];
 
 // Halaman Riwayat: log session (selain AKSI_RIWAYAT_DB) digabung dengan audit dari PostgreSQL.
 // Tabel riwayat_aktivitas juga berisi data contoh aksi lain (Alokasi, Insiden, ...) yang sama dengan log session;

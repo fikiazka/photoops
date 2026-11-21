@@ -138,7 +138,8 @@ if (is_post()) {
         wajib_boleh('kebutuhan.kelola');
         wajib_proyek_aktif($proyek);
         wajib_persiapan_terbuka($proyek);
-        $preset = db_cari('preset', (int) input('preset_id'));
+        // Preset dibaca dari PostgreSQL; itemnya DISALIN menjadi kebutuhan proyek (kebutuhan masih di session).
+        $preset = cari_preset(input('preset_id'));
         if (!$preset) {
             simpan_form('dialog-isi-preset', [], ['preset_id' => 'Pilih preset.']);
             muat_ulang();
@@ -146,8 +147,8 @@ if (is_post()) {
         $sudah = array_map(fn ($k) => mb_strtolower($k['acuan'] !== '' ? $k['acuan'] : $k['nama']), kebutuhan_proyek($pid));
         $tambah = 0;
         $lewat = 0;
-        foreach (db('detail_preset') as $d) {
-            if ((int) $d['preset_id'] !== (int) $preset['id']) {
+        foreach (semua_item_preset() as $d) {
+            if ($d['preset_id'] !== $preset['id']) {
                 continue;
             }
             if (in_array(mb_strtolower($d['nama_perlengkapan']), $sudah, true)) {

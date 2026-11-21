@@ -11,13 +11,15 @@ defined('ROOT') || exit;
 </div>
 <div class="bidang">
 <label for="preset-deskripsi">Deskripsi <span class="redup">(opsional)</span></label>
-<textarea id="preset-deskripsi" name="deskripsi" maxlength="160"><?= e(lama('deskripsi')) ?></textarea>
+<textarea id="preset-deskripsi" name="deskripsi" maxlength="160"<?= attr_galat('deskripsi') ?>><?= e(lama('deskripsi')) ?></textarea>
+<?= pesan_galat('deskripsi') ?>
 </div>
 <?= dialog_tutup('Simpan preset') ?>
 
 <?= dialog_buka('dialog-item-preset', lama('id') !== '' ? 'Ubah item' : 'Tambah item', 'Item preset merujuk ke model barang, bukan unit tertentu.') ?>
 <input type="hidden" name="aksi" value="simpan_item">
 <input type="hidden" name="id" value="<?= e(lama('id')) ?>">
+<input type="hidden" name="preset_id" value="<?= e((string) ($terpilih['id'] ?? '')) ?>">
 <div class="bidang">
 <label for="item-nama">Model barang</label>
 <input id="item-nama" name="nama_perlengkapan" type="text" maxlength="60" list="daftar-model-preset" value="<?= e(lama('nama_perlengkapan')) ?>" placeholder="Ketik atau pilih model"<?= attr_galat('nama_perlengkapan') ?>>
