@@ -8,10 +8,10 @@ Dokumen ini adalah bahan untuk Bab 2.3, Bab 3 (bagian basis data), Bab 4 (bagian
 |---|---|
 | Skema 14 tabel, data contoh, role aplikasi `photoops_si3_app`, database `photoops_si3_dev` | Sudah dibuat dan diuji |
 | Uji struktur, relasi, constraint, kueri, dan pola transaksi bersamaan (di PostgreSQL) | Sudah dijalankan, hasil di Bab 4 |
-| Aplikasi PHP memakai PostgreSQL | **Sebagian (hybrid).** Sudah PostgreSQL: Login & Pengguna (Sprint Backend 1), Kategori & Inventaris Studio (Sprint Backend 2), Proyek & Anggota Proyek (Sprint Backend 3A), Preset & Item Preset (Sprint Backend 3B), Kebutuhan & Alokasi termasuk catatan Rental (Sprint Backend 3C), Serah Terima barang keluar/kembali (Sprint Backend 4A). Masih PHP Session: Persiapan (checklist dan konfirmasi), Insiden. Riwayat: aksi Pengguna, Perlengkapan, Proyek, Tim, Preset, Kebutuhan, Alokasi, Rental, Barang Keluar, Pengembalian di PostgreSQL, lainnya (Persiapan, Insiden) masih session |
+| Aplikasi PHP memakai PostgreSQL | **Sebagian (hybrid).** Sudah PostgreSQL: Login & Pengguna (Sprint Backend 1), Kategori & Inventaris Studio (Sprint Backend 2), Proyek & Anggota Proyek (Sprint Backend 3A), Preset & Item Preset (Sprint Backend 3B), Kebutuhan & Alokasi termasuk catatan Rental (Sprint Backend 3C), Serah Terima barang keluar/kembali (Sprint Backend 4A), Persiapan H-1 (Sprint Backend 4B). Masih PHP Session: Insiden. Riwayat: semua aksi di PostgreSQL kecuali Insiden. Session lainnya hanya untuk login, CSRF, flash, dan form |
 | Aturan yang dijaga aplikasi (bentrok jadwal unit, barang keluar sekali, kembali tidak melebihi keluar) | **Dijaga PostgreSQL lewat PHP**: bentrok jadwal unit sejak 3C; barang keluar sekali per alokasi, satu unit fisik tidak keluar di dua proyek, dan kembali tidak melebihi keluar sejak 4A (penguncian baris, diuji termasuk request bersamaan) |
 
-Rincian integrasi Proyek & Anggota Proyek ada di bagian [Sprint Backend 3A](#sprint-backend-3a--proyek-dan-anggota-proyek), Preset di bagian [Sprint Backend 3B](#sprint-backend-3b--preset-perlengkapan-dan-item-preset), Kebutuhan & Alokasi di bagian [Sprint Backend 3C](#sprint-backend-3c--kebutuhan-proyek-dan-alokasi-barang), Serah Terima di bagian [Sprint Backend 4A](#sprint-backend-4a--serah-terima-barang).
+Rincian integrasi Proyek & Anggota Proyek ada di bagian [Sprint Backend 3A](#sprint-backend-3a--proyek-dan-anggota-proyek), Preset di bagian [Sprint Backend 3B](#sprint-backend-3b--preset-perlengkapan-dan-item-preset), Kebutuhan & Alokasi di bagian [Sprint Backend 3C](#sprint-backend-3c--kebutuhan-proyek-dan-alokasi-barang), Serah Terima di bagian [Sprint Backend 4A](#sprint-backend-4a--serah-terima-barang), Persiapan di bagian [Sprint Backend 4B](#sprint-backend-4b--persiapan-h-1).
 
 File utama di `database/`: `001_schema.sql` (struktur), `002_seed_demo.sql` (data contoh), `004_query_photoops.sql` (7 kueri operasional). File pendukung di `database/pendukung/`: `000_setup.sql` (admin membuat role dan database, sekali), `003_hak_akses.sql` (hak akses role aplikasi, dijalankan setelah 001 dan 002), dan `005_uji_integritas.sql` (uji). Urutan pemasangan: 000 → 001 → 002 → 003.
 
@@ -752,8 +752,58 @@ Transaksi serah terima tidak bisa dihapus oleh aplikasi (hanya ditambah), sehing
 
 ### Keterbatasan yang tersisa
 
-- **Persiapan masih per browser** (checklist, konfirmasi, kunci "persiapan sudah dikonfirmasi"). Browser lain yang belum mengonfirmasi tidak bisa mencatat barang keluar, tetapi juga tidak ikut terkunci saat mengubah kebutuhan/alokasi yang belum keluar.
+- **Persiapan masih per browser** (checklist, konfirmasi, kunci "persiapan sudah dikonfirmasi"). Browser lain yang belum mengonfirmasi tidak bisa mencatat barang keluar, tetapi juga tidak ikut terkunci saat mengubah kebutuhan/alokasi yang belum keluar. *(Diselesaikan di Sprint 4B.)*
 - **Insiden masih per browser.** Insiden otomatis dari pengembalian Rusak/Maintenance hanya tersimpan di session browser yang mencatat (kondisi unit dan transaksinya sudah di PostgreSQL); kode INS dapat sama di dua browser.
+- Mengubah tanggal proyek tetap tidak memperbarui tanggal alokasi yang sudah ada.
+
+## Sprint Backend 4B — Persiapan H-1
+
+### Ruang lingkup
+
+Checklist, konfirmasi, pembatalan konfirmasi, dan riwayat Persiapan dibaca dan ditulis di PostgreSQL lewat `data/logic_persiapan.php`. Skema dan hak akses tidak diubah: tabelnya sudah dirancang untuk ini.
+
+| Data | Kolom PostgreSQL |
+|---|---|
+| Centang checklist per alokasi | `alokasi_barang.diperiksa` (`CHECK ck_alokasi_diperiksa`: hanya alokasi Dikonfirmasi yang boleh dicentang) |
+| Progres checklist | `persiapan_proyek.diperbarui_pada`, `diperbarui_oleh` |
+| Konfirmasi selesai | `persiapan_proyek.dikonfirmasi_pada`, `dikonfirmasi_oleh` |
+| Pembatalan konfirmasi terakhir | `persiapan_proyek.batal_pada`, `batal_oleh`, `batal_otomatis`, `batal_alasan`, `batal_konfirmasi_pada`, `batal_konfirmasi_oleh` |
+| Riwayat lengkap | `riwayat_aktivitas` aksi `Persiapan` (progres, konfirmasi, dibuka ulang, tidak berlaku lagi) |
+
+### Aturan dan penguncian
+
+| Aturan | Penerapan |
+|---|---|
+| Urutan kunci | proyek (`FOR UPDATE`) → `persiapan_proyek` (`FOR UPDATE`) → alokasi aktif (`FOR UPDATE`, urut id) → unit Studio (`FOR SHARE`). Sama dengan 3C dan 4A: semua perubahan kebutuhan, alokasi, persiapan, dan barang keluar mengunci baris proyek lebih dulu |
+| Simpan checklist | Hanya alokasi yang bisa diperiksa (Dikonfirmasi; Rental sudah diterima) yang tersimpan; centang lama rental yang belum diterima dipertahankan. Ditolak bila persiapan sudah dikonfirmasi |
+| Konfirmasi | Syarat (`syarat_persiapan`) dinilai ulang dari data terbaru setelah semua baris dikunci. Konfirmasi kedua ditolak ("tidak dicatat dua kali"), sehingga status dan riwayat tidak ganda |
+| Kunci setelah konfirmasi | Perubahan kebutuhan, alokasi, isi dari preset, dan checklist ditolak **di dalam transaksi** (`persiapan_dikonfirmasi_db()` setelah kunci proyek), bukan hanya di halaman. Untuk mengubah: buka ulang persiapan |
+| Buka ulang | Manual dengan alasan, atau otomatis bila syarat tidak lagi terpenuhi karena perubahan di luar Persiapan (unit menjadi Rusak/Maintenance di Inventaris, rental dikembalikan ke vendor). Konfirmasi yang barangnya sudah keluar (beku) tidak bisa dibuka |
+| Barang Keluar | `proses_checkout()` menilai gerbang persiapan dari PostgreSQL di dalam kuncinya dan mensyaratkan alokasi dicentang. Browser mana pun yang berwenang bisa mencatat barang keluar setelah persiapan dikonfirmasi; tanpa konfirmasi semua ditolak |
+| Penerimaan rental | Centang alokasi itu dilepas di UPDATE yang sama (barang harus diperiksa ulang) |
+| Pembatalan alokasi | Centangnya ikut dilepas (`diperiksa = FALSE`); sebelumnya pembatalan alokasi contoh yang dicentang akan melanggar CHECK |
+| Deadline | Dibaca dari `proyek.deadline_persiapan`; "lewat" dibandingkan dengan `sekarang()` (tanggal demo `HARI_INI`). Log konfirmasi mencatat batas persiapan saat itu; penilaian Tepat Waktu/Terlambat memakai urutan id log (perubahan deadline sesudah konfirmasi → nilai `lama`), tidak bergantung pada jam |
+
+### Migrasi dari Session
+
+Seed PostgreSQL sudah berisi checklist yang sama dengan seed session, plus konfirmasi PRJ-019 dan PRJ-025. `VERSI_DATA` **tidak** dinaikkan: bootstrap hanya menyisakan `insiden` dan log aksi Insiden di `$_SESSION['db']`, sehingga insiden yang sudah ada di browser tidak hilang. Checklist/konfirmasi yang pernah dibuat di session sebelum 4B tidak terbawa (PostgreSQL menjadi satu-satunya sumber). Seed session (`data/seed.php`) kini hanya berisi insiden dan log insiden.
+
+### Pengujian
+
+| Uji | Perintah | Hasil |
+|---|---|---|
+| Integrasi 4B (P01–P20, 62 pemeriksaan) | `PHOTOOPS_DB_NAME=photoops_si3_test php tests/uji_persiapan.php` | 62 lulus, 0 gagal (dua kali berturut-turut) |
+| Regresi 4A | `tests/uji_serah_terima.php` | 56 lulus, 0 gagal |
+| Regresi 3C | `tests/uji_kebutuhan_alokasi.php` | 90 lulus, 0 gagal |
+| Regresi 3A | `tests/uji_proyek.php` | 70 lulus, 0 gagal |
+| Regresi 3B | `tests/uji_preset.php` | 75 lulus, 0 gagal |
+| Sintaks PHP | `php -l` semua berkas | 0 galat |
+| Regresi Inventaris | `tests/uji_inventaris.php` | **Belum dijalankan** (database uji perlu dibuat ulang dari 001 + 002 + 003) |
+
+### Keterbatasan yang tersisa
+
+- **Insiden masih di PHP Session** (laporan insiden dan log aksi Insiden): per browser, kode INS dapat sama di dua browser. Tabel `laporan_insiden` dan `seq_kode_insiden` sudah tersedia untuk Sprint 4C.
+- Pencabutan otomatis konfirmasi akibat perubahan di luar Persiapan (Inventaris, Rental) dijalankan sesudah request yang mengubah data; sampai saat itu gerbang Barang Keluar tetap menilai syarat langsung dan menolak bila tidak terpenuhi.
 - Mengubah tanggal proyek tetap tidak memperbarui tanggal alokasi yang sudah ada.
 
 ---

@@ -241,6 +241,8 @@ function rentang_tgl(string $mulai, string $selesai): string
     return tgl($mulai, 'singkat') . ' – ' . tgl($selesai);
 }
 
+// Penyimpanan session untuk modul yang belum dimigrasikan ke PostgreSQL (sejak Sprint 4B hanya 'insiden' dan 'riwayat'
+// untuk log Insiden). Data bisnis lain dibaca dan ditulis lewat fungsi PostgreSQL di data/logic_*.php.
 function db(string $tabel): array
 {
     return $_SESSION['db'][$tabel] ?? [];
@@ -249,11 +251,6 @@ function db(string $tabel): array
 function db_cari(string $tabel, $id): ?array
 {
     return $_SESSION['db'][$tabel][$id] ?? null;
-}
-
-function db_saring(string $tabel, callable $syarat): array
-{
-    return array_filter(db($tabel), $syarat);
 }
 
 function db_tambah(string $tabel, array $data): int
@@ -272,10 +269,6 @@ function db_ubah(string $tabel, int $id, array $perubahan): void
     }
 }
 
-function db_hapus(string $tabel, int $id): void
-{
-    unset($_SESSION['db'][$tabel][$id]);
-}
 
 function inisial(string $nama): string
 {

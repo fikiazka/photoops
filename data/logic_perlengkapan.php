@@ -46,7 +46,7 @@ function cari_perlengkapan($id): ?array
 }
 
 // Penanda bahwa kondisi/status unit berubah pada request ini. Bootstrap memakainya untuk menjalankan
-// sinkron_konfirmasi_persiapan(), karena perubahan di PostgreSQL tidak mengubah $_SESSION['db'].
+// sinkron_konfirmasi_persiapan() sesudah POST (konfirmasi persiapan yang syaratnya tidak lagi terpenuhi dicabut).
 // inventaris_berubah(true) = tandai, inventaris_berubah(false) = hapus tanda (dipakai bila perubahan dibatalkan).
 function inventaris_berubah(?bool $atur = null): bool
 {
@@ -623,15 +623,16 @@ function proses_aksi_rental(string $aksi, array $alokasi, array $pengguna): arra
         // Sejak Sprint Backend 3C catatan rental disimpan di baris alokasi_barang (PostgreSQL). Syarat UPDATE mencegah dua
         // browser mencatat penerimaan/pengembalian yang sama dua kali.
         if ($terima) {
-            $centang_lama = in_array((int) $alokasi['id'], id_diperiksa((int) $alokasi['proyek_id']), true);
+            // Centang persiapan dari sebelum penerimaan dilepas di UPDATE yang sama (barang harus diperiksa ulang).
+            $centang_lama = !empty($alokasi['diperiksa']);
             $ok = simpan_catatan_rental((int) $alokasi['id'],
                 ['diterima_pada' => $waktu, 'diterima_oleh' => $pengguna['id'], 'kondisi_terima' => $kondisi, 'catatan_terima' => $catatan],
                 "status = 'Dikonfirmasi' AND diterima_pada IS NULL", [],
-                [$label, $jumlah . ' unit diterima dari ' . $alokasi['vendor'] . ', kondisi ' . $kondisi . ($catatan !== '' ? ' · ' . $catatan : '') . ($centang_lama ? ' · centang persiapan lama (sebelum penerimaan) direset' : '')]);
+                [$label, $jumlah . ' unit diterima dari ' . $alokasi['vendor'] . ', kondisi ' . $kondisi . ($catatan !== '' ? ' · ' . $catatan : '') . ($centang_lama ? ' · centang persiapan lama (sebelum penerimaan) direset' : '')],
+                true);
             if (!$ok) {
                 return ['umum' => $nama . ' sudah diubah pengguna lain (misalnya sudah tercatat diterima atau alokasinya berubah). Muat ulang halaman.'];
             }
-            lepas_dari_checklist((int) $alokasi['proyek_id'], [(int) $alokasi['id']]);
             return ['sukses' => $nama . ': penerimaan ' . $jumlah . ' unit dicatat. ' . ($centang_lama ? 'Centang persiapan lama dari sebelum penerimaan direset; periksa barang lalu centang ulang di Persiapan proyek.' : 'Centang di Persiapan proyek setelah barang diperiksa.')];
         }
         $ok = simpan_catatan_rental((int) $alokasi['id'],

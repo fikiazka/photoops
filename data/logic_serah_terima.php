@@ -387,12 +387,24 @@ function proses_checkout(array $proyek, array $item, array $penerima, string $wa
         $minta[(int) $baris['alokasi']['id']] = (int) $baris['jumlah'];
     }
     $alokasi = kunci_alokasi_proyek($pid, array_keys($minta));
+    // Gerbang persiapan (Sprint 4B) dinilai ulang dari PostgreSQL di dalam kunci proyek: konfirmasi persiapan harus ada dan
+    // syaratnya masih terpenuhi. Konfirmasi dan pembukaan ulang persiapan juga mengunci proyek lebih dulu, jadi status ini
+    // tidak bisa berubah sampai COMMIT. Tidak bergantung pada session browser yang mencatat.
+    segarkan_data_persiapan();
+    $gerbang = gerbang_keluar($kunci);
+    if (!$gerbang['boleh']) {
+        return ['status' => 'ditolak', 'masalah' => [$gerbang['alasan']]];
+    }
     $saldo = saldo_alokasi_db(array_keys($minta));
     $masalah = [];
     foreach ($minta as $id => $jumlah) {
         $a = $alokasi[$id] ?? null;
         if (!$a) {
             $masalah[] = 'Alokasi #' . $id . ' tidak ada lagi di proyek ' . $proyek['kode'] . '.';
+            continue;
+        }
+        if (!$a['diperiksa']) {
+            $masalah[] = nama_barang_alokasi($a) . ' (' . $a['sumber'] . '): belum diperiksa di persiapan.';
             continue;
         }
         $nama = nama_barang_alokasi($a) . ' (' . $a['sumber'] . ')';

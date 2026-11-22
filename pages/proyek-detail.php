@@ -96,6 +96,7 @@ if (is_post()) {
         $isi = ['nama' => $data['nama'], 'acuan' => $data['acuan'], 'kategori_id' => (int) $data['kategori_id'], 'jumlah' => (int) $data['jumlah']];
         // Disimpan di PostgreSQL; aturan alokasi aktif dicek ulang di dalam kunci proyek (bisa berubah dari browser lain).
         $hasil = simpan_kebutuhan($pid, $id, $isi);
+        tolak_bila_persiapan_terkunci($hasil, $proyek);
         if ($hasil['status'] === 'kategori_terkunci') {
             simpan_form('dialog-kebutuhan', $data, ['kategori_id' => 'Kategori tidak bisa diubah karena kebutuhan ini sudah punya alokasi aktif atau riwayat serah terima. Batalkan atau hapus alokasi terkait terlebih dahulu.']);
         } elseif ($hasil['status'] === 'kurang_dari_terisi') {
@@ -129,8 +130,8 @@ if (is_post()) {
             muat_ulang();
         }
         $hasil = hapus_kebutuhan($pid, $k['id']);
+        tolak_bila_persiapan_terkunci($hasil, $proyek);
         if ($hasil['status'] === 'ok') {
-            lepas_dari_checklist($pid, $hasil['alokasi_ids']);
             flash('sukses', 'Kebutuhan ' . $k['nama'] . ' dihapus.');
         } elseif ($hasil['status'] === 'masih_alokasi') {
             flash('error', 'Kebutuhan ' . $k['nama'] . ' masih punya alokasi aktif. Batalkan atau hapus alokasinya dulu.');
@@ -151,6 +152,7 @@ if (is_post()) {
         // Item preset DISALIN menjadi kebutuhan proyek dalam satu transaksi PostgreSQL (preset dan kebutuhan tidak saling merujuk).
         $preset = cari_preset(input('preset_id'));
         $hasil = $preset ? isi_kebutuhan_dari_preset($pid, $preset['id']) : ['status' => 'preset_tidak_ada'];
+        tolak_bila_persiapan_terkunci($hasil, $proyek);
         if ($hasil['status'] === 'preset_tidak_ada') {
             simpan_form('dialog-isi-preset', [], ['preset_id' => 'Pilih preset.']);
         } elseif ($hasil['status'] === 'proyek_tutup') {
@@ -245,6 +247,7 @@ if (is_post()) {
             'status' => $data['status'],
             'catatan' => $data['catatan'],
         ]);
+        tolak_bila_persiapan_terkunci($hasil, $proyek);
         $kode_unit = $hasil['kode_unit'] ?? '';
         $galat_db = [
             'melebihi' => ['jumlah', ($hasil['sisa'] ?? 0) > 0 ? 'Melebihi sisa kebutuhan. Hanya ' . ($hasil['sisa'] ?? 0) . ' unit lagi yang bisa dialokasikan.' : 'Kebutuhan ini sudah teralokasi penuh.'],
@@ -262,7 +265,6 @@ if (is_post()) {
         } elseif ($hasil['status'] === 'proyek_tutup') {
             flash('error', 'Proyek ' . $proyek['kode'] . ' sudah ditutup. Kebutuhan dan alokasinya tidak bisa diubah lagi.');
         } else {
-            lepas_dari_checklist($pid, [$hasil['id']]);
             flash('sukses', $hasil['nama'] . ' dialokasikan untuk ' . $hasil['kebutuhan'] . '.');
         }
         muat_ulang();
@@ -282,6 +284,7 @@ if (is_post()) {
         $serah = serah_alokasi($a['id']);
         $nama = nama_barang_alokasi($a);
         $hasil = $serah ? ['status' => 'serah_sesi'] : ubah_status_alokasi($pid, $a['id'], ['konfirmasi_alokasi' => 'konfirmasi', 'batalkan_alokasi' => 'batalkan', 'hapus_alokasi' => 'hapus'][$aksi]);
+        tolak_bila_persiapan_terkunci($hasil, $proyek);
         $lama = $hasil['lama'] ?? $a;
         $unit = $hasil['unit'] ?? null;
         if ($hasil['status'] === 'serah_sesi') {
@@ -301,12 +304,10 @@ if (is_post()) {
         } elseif ($hasil['status'] === 'tidak_ada') {
             flash('error', 'Alokasi tidak ditemukan di proyek ini. Mungkin sudah dihapus pengguna lain.');
         } elseif ($aksi === 'konfirmasi_alokasi') {
-            lepas_dari_checklist($pid, [(int) $a['id']]);
             flash('sukses', $nama . ' dikonfirmasi. Centang di Persiapan setelah barang diperiksa.');
         } elseif ($aksi === 'batalkan_alokasi') {
             flash('sukses', 'Alokasi ' . $nama . ' dibatalkan.');
         } else {
-            lepas_dari_checklist($pid, [(int) $a['id']]);
             flash('sukses', 'Alokasi ' . $nama . ' dihapus.');
         }
         muat_ulang();
@@ -322,18 +323,19 @@ if (is_post()) {
             muat_ulang();
         }
         $kiriman = array_values(array_unique(array_map(fn ($v) => preg_match('/^\d{1,9}$/', $v) ? (int) $v : 0, input_daftar('diperiksa'))));
-        $aktif_p = alokasi_proyek($pid, true);
-        $boleh_periksa = array_map(fn ($a) => (int) $a['id'], array_filter($aktif_p, 'alokasi_bisa_diperiksa'));
-        $belum_bisa = array_map(fn ($a) => (int) $a['id'], array_filter($aktif_p, fn ($a) => !alokasi_bisa_diperiksa($a)));
-        $diabaikan = count(array_diff($kiriman, $boleh_periksa));
-        $rekam = ambil_persiapan($pid);
-        $pilih = array_values(array_unique(array_merge(
-            array_intersect($kiriman, $boleh_periksa),
-            array_intersect(array_map('intval', $rekam['diperiksa'] ?? []), $belum_bisa)
-        )));
-        db_ubah('persiapan', $rekam['id'], ['diperiksa' => $pilih, 'diperbarui_pada' => date('Y-m-d H:i', strtotime(sekarang())), 'diperbarui_oleh' => $pengguna['id']]);
+        // Disimpan di PostgreSQL (alokasi_barang.diperiksa) dalam satu transaksi berkunci; ditolak bila persiapan sudah
+        // dikonfirmasi (misalnya dari browser lain setelah halaman ini dibuka).
+        $simpan = simpan_checklist_persiapan($pid, $kiriman, (int) $pengguna['id']);
+        if ($simpan['status'] === 'terkunci') {
+            flash('error', pesan_persiapan_terkunci($proyek, $simpan['rekam']));
+            muat_ulang();
+        }
+        if ($simpan['status'] !== 'ok') {
+            flash('error', 'Proyek ' . $proyek['kode'] . ' sudah ditutup. Checklist tidak bisa diubah lagi.');
+            muat_ulang();
+        }
+        $diabaikan = $simpan['diabaikan'];
         $hasil = persiapan_proyek($proyek);
-        catat_riwayat('Persiapan', $proyek['kode'], $hasil['selesai'] . ' dari ' . $hasil['total'] . ' barang diperiksa');
         $abaikan_teks = $diabaikan ? ' ' . $diabaikan . ' centang diabaikan karena alokasinya tidak ada di proyek ini atau belum bisa diperiksa.' : '';
         $nilai_p = penilaian_persiapan($proyek);
         if ($nilai_p['boleh_konfirmasi']) {
@@ -366,7 +368,6 @@ if (is_post()) {
             flash('error', 'Formulir tidak cocok dengan proyek ini. Muat ulang halaman lalu coba lagi.');
             muat_ulang();
         }
-        $rekam = rekam_persiapan($pid);
         $nilai_p = penilaian_persiapan($proyek);
         if ($aksi === 'konfirmasi_persiapan') {
             if ($nilai_p['dikonfirmasi_pada']) {
@@ -381,10 +382,20 @@ if (is_post()) {
                 simpan_form('dialog-konfirmasi-persiapan', [], ['konfirmasi' => 'Centang pernyataan bahwa seluruh perlengkapan sudah diperiksa dan siap.']);
                 muat_ulang();
             }
-            $rekam = ambil_persiapan($pid);
-            $s = $nilai_p['syarat'];
-            db_ubah('persiapan', (int) $rekam['id'], ['dikonfirmasi_pada' => date('Y-m-d H:i', strtotime(sekarang())), 'dikonfirmasi_oleh' => $pengguna['id']]);
-            catat_riwayat('Persiapan', $proyek['kode'], 'Persiapan dikonfirmasi selesai · ' . $s['kebutuhan'] . ' kebutuhan, ' . $s['memenuhi'] . ' alokasi (Studio ' . $s['unit_sumber']['Studio'] . ', Rental ' . $s['unit_sumber']['Rental'] . ', Milik Kru ' . $s['unit_sumber']['Milik Kru'] . ' unit)', 'Siap untuk Dikonfirmasi', 'Dikonfirmasi Selesai', ['deadline' => $proyek['deadline_persiapan']]);
+            // Syarat dinilai ulang di dalam transaksi setelah proyek, persiapan, alokasi, dan unit dikunci.
+            $hasil = konfirmasi_persiapan($pid, (int) $pengguna['id']);
+            if ($hasil['status'] === 'sudah') {
+                flash('error', 'Persiapan ' . $proyek['kode'] . ' sudah dikonfirmasi selesai oleh ' . nama_pengguna($hasil['rekam']['dikonfirmasi_oleh']) . ' pada ' . tgl($hasil['rekam']['dikonfirmasi_pada'], 'lengkap') . '. Konfirmasi tidak dicatat dua kali.');
+                muat_ulang();
+            }
+            if ($hasil['status'] === 'belum_siap') {
+                flash('error', 'Persiapan belum bisa dikonfirmasi. ' . implode(' ', $hasil['masalah']));
+                muat_ulang();
+            }
+            if ($hasil['status'] !== 'ok') {
+                flash('error', 'Proyek ' . $proyek['kode'] . ' sudah ditutup. Konfirmasi persiapan tidak bisa dibuat.');
+                muat_ulang();
+            }
             flash('sukses', 'Persiapan ' . $proyek['kode'] . ' dikonfirmasi selesai. Barang belum tercatat keluar; catat penyerahan barang di Serah Terima saat barang dibawa.');
             muat_ulang();
         }
@@ -401,7 +412,15 @@ if (is_post()) {
             simpan_form('dialog-buka-persiapan', ['alasan' => $alasan], ['alasan' => 'Tulis alasan 5 sampai 120 karakter.']);
             muat_ulang();
         }
-        cabut_konfirmasi_persiapan($proyek, $rekam, $alasan, false);
+        $hasil = cabut_konfirmasi_persiapan($pid, $alasan, (int) $pengguna['id']);
+        if ($hasil['status'] === 'beku') {
+            flash('error', $hasil['sudah_keluar'] . ' alokasi barang proyek ini sudah tercatat keluar di serah terima. Konfirmasi persiapan tidak bisa dibuka ulang agar riwayat transaksi tetap konsisten.');
+            muat_ulang();
+        }
+        if ($hasil['status'] !== 'ok') {
+            flash('error', 'Persiapan ' . $proyek['kode'] . ' belum dikonfirmasi (atau sudah dibuka ulang dari browser lain), jadi tidak ada yang perlu dibuka ulang.');
+            muat_ulang();
+        }
         flash('sukses', 'Persiapan ' . $proyek['kode'] . ' dibuka ulang. Progres checklist tetap tersimpan; konfirmasi ulang diperlukan setelah perubahan selesai.');
         muat_ulang();
     }

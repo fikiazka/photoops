@@ -33,25 +33,23 @@ foreach (glob(ROOT . '/data/logic_*.php') as $berkas_logika) {
 
 set_exception_handler('tangani_galat_db');
 
-// Data prototipe modul yang belum dimigrasikan (persiapan, insiden, log session) masih disimpan di session.
+// Data session untuk modul yang belum dimigrasikan: hanya Insiden (laporan insiden dan log aktivitas Insiden).
 if (!isset($_SESSION['db']) || ($_SESSION['db_versi'] ?? 0) !== VERSI_DATA) {
     $_SESSION['db'] = seed_data();
     $_SESSION['db_versi'] = VERSI_DATA;
 }
-// Akun pengguna, kategori, unit inventaris, proyek, anggota proyek, preset, kebutuhan, alokasi, dan serah terima hanya dibaca
-// dari PostgreSQL; salinannya di data session tidak dipakai. Preset (Sprint 3B) tidak memerlukan kenaikan VERSI_DATA karena
-// tidak ada data session yang menyimpan id preset (kebutuhan dari preset berupa salinan nama/kategori/jumlah).
-unset($_SESSION['db']['pengguna'], $_SESSION['db']['kategori'], $_SESSION['db']['perlengkapan'],
-    $_SESSION['db']['proyek'], $_SESSION['db']['anggota_proyek'], $_SESSION['db']['preset'], $_SESSION['db']['detail_preset'],
-    $_SESSION['db']['kebutuhan'], $_SESSION['db']['alokasi'], $_SESSION['db']['transaksi'], $_SESSION['db']['detail_transaksi']);
+// Semua data bisnis lain hanya dibaca dari PostgreSQL. Salinan lama di session (pengguna, inventaris, proyek, preset,
+// kebutuhan, alokasi, persiapan, serah terima) dibuang; log session untuk aksi yang kini di PostgreSQL juga dibuang agar
+// tidak ada dua sumber data. Persiapan (Sprint 4B) tidak menaikkan VERSI_DATA: insiden yang sudah ada di session tetap utuh.
+$_SESSION['db'] = array_intersect_key($_SESSION['db'], ['insiden' => true, 'riwayat' => true]) + ['insiden' => [], 'riwayat' => []];
+$_SESSION['db']['riwayat'] = array_filter($_SESSION['db']['riwayat'], fn ($r) => !in_array($r['aksi'] ?? '', AKSI_RIWAYAT_DB, true));
 
-// Sesudah POST yang benar-benar mengubah data, konfirmasi persiapan yang syaratnya tidak lagi terpenuhi dicabut secara terpusat.
-// Perubahan unit dan proyek/tim terjadi di PostgreSQL (tidak mengubah session), jadi ditandai lewat inventaris_berubah()
-// dan proyek_berubah().
+// Sesudah POST yang mengubah data di PostgreSQL, konfirmasi persiapan yang syaratnya tidak lagi terpenuhi (misalnya unit
+// menjadi Rusak atau rental dikembalikan ke vendor) dicabut secara terpusat. Perubahan ditandai lewat inventaris_berubah()
+// dan proyek_berubah() (juga dipasang oleh perubahan kebutuhan, alokasi, persiapan, dan serah terima).
 if (is_post()) {
-    $jejak_db_awal = md5(serialize($_SESSION['db']));
-    register_shutdown_function(function () use ($jejak_db_awal) {
-        if (isset($_SESSION['db']) && (inventaris_berubah() || proyek_berubah() || md5(serialize($_SESSION['db'])) !== $jejak_db_awal)) {
+    register_shutdown_function(function () {
+        if (inventaris_berubah() || proyek_berubah()) {
             sinkron_konfirmasi_persiapan();
         }
     });

@@ -124,6 +124,8 @@ if (($argv[1] ?? '') === '--fungsi') {
         } elseif ($jenis === 'kembali') {
             $h = catat_pengembalian($proyek, [['alokasi' => $a, 'per_kondisi' => $per($argv[6], (int) $argv[7])]], null, $kini, 'uji pengembalian bersamaan');
             echo json_encode(['status' => $h['status'], 'masalah' => implode(' ', $h['masalah'] ?? [])]);
+        } elseif ($jenis === 'buka') {
+            echo json_encode(['status' => cabut_konfirmasi_persiapan($pid, 'uji buka ulang bersamaan', 2)['status'], 'masalah' => '']);
         } elseif ($jenis === 'status') {
             echo json_encode(['status' => ubah_status_alokasi($pid, $aid, $argv[6])['status'], 'masalah' => '']);
         } elseif ($jenis === 'rb_keluar') {
@@ -332,7 +334,7 @@ function alokasi_uji(int $pid, string $nama, int $kategori, array $isi): int
     return (int) satu('SELECT id FROM alokasi_barang WHERE kebutuhan_id = :k', ['k' => $kid]);
 }
 
-function konfirmasi_persiapan(string $sid, int $pid, array $aids): array
+function uji_konfirmasi_persiapan(string $sid, int $pid, array $aids): array
 {
     global $D;
     minta($sid, SA, $D, ['id' => (string) $pid], ['aksi' => 'simpan_persiapan', 'diperiksa' => array_map('strval', $aids)]);
@@ -387,7 +389,7 @@ minta('admin', SA, 'pages/perlengkapan.php', ['tab' => 'eksternal'], ['aksi' => 
     'jumlah' => '3', 'waktu' => '2026-11-07T00:01', 'kondisi' => 'Baik', 'catatan' => '', 'konfirmasi' => '1']);
 $rental_awal = semua('SELECT vendor, nama_barang, jumlah, diterima_pada, dikembalikan_vendor_pada, pemilik_id FROM alokasi_barang WHERE id IN (:a, :b) ORDER BY id',
     ['a' => $aRental, 'b' => $aKru]);
-$h = konfirmasi_persiapan('admin', $p1, [$aStudio, $aRental, $aKru]);
+$h = uji_konfirmasi_persiapan('admin', $p1, [$aStudio, $aRental, $aKru]);
 cek('Persiapan: proyek uji, alokasi Studio/Rental/Milik Kru, rental diterima, persiapan dikonfirmasi di browser A',
     $p1 && $aStudio && $aRental && $aKru && str_contains($h['pesan'], 'dikonfirmasi selesai'), $h['pesan']);
 
@@ -413,11 +415,16 @@ $r = fungsi('keluar', $p1, $aKru);
 cek('S07b ditolak juga di dalam transaksi PostgreSQL (tanpa gerbang halaman)', ($r['status'] ?? '') === 'ditolak' && str_contains($r['masalah'] ?? '', 'sudah tercatat keluar') && jumlah_keluar_detail($aKru) === 1, $r['masalah'] ?? '');
 foreach (['batalkan_alokasi' => 'dibatalkan', 'hapus_alokasi' => 'dihapus'] as $aksi => $ket) {
     $h = minta('browserB', SA, $D, ['id' => (string) $p1], ['aksi' => $aksi, 'id' => (string) $aStudio]);
+    // Sejak Sprint 4B dua kunci berlaku: persiapan terkonfirmasi (PostgreSQL) dan serah terima. Keduanya "dikunci".
     cek('S08a alokasi yang barangnya masih keluar tidak bisa ' . $ket . ' dari browser lain', satu('SELECT status FROM alokasi_barang WHERE id = :a', ['a' => $aStudio]) === 'Dikonfirmasi'
-        && str_contains($h['pesan'], 'serah terima'), $h['pesan']);
+        && str_contains($h['pesan'], 'dikunci'), $h['pesan']);
 }
-cek('S08b ubah_status_alokasi() menolak di dalam transaksi (punya_serah)', (fungsi('status', $p1, $aKru, ['hapus'])['status'] ?? '') === 'punya_serah'
-    && (fungsi('status', $p1, $aKru, ['batalkan'])['status'] ?? '') === 'punya_serah');
+$st_hapus = fungsi('status', $p1, $aKru, ['hapus'])['status'] ?? '';
+$st_batal = fungsi('status', $p1, $aKru, ['batalkan'])['status'] ?? '';
+cek('S08b ubah_status_alokasi() menolak di dalam transaksi (persiapan terkunci / punya serah terima)',
+    in_array($st_hapus, ['persiapan_terkunci', 'punya_serah'], true) && in_array($st_batal, ['persiapan_terkunci', 'punya_serah'], true), $st_hapus . ' ' . $st_batal);
+$r = fungsi('buka', $p1, 0);
+cek('S08f persiapan yang barangnya sudah keluar tidak bisa dibuka ulang (sehingga alokasinya tetap terkunci)', ($r['status'] ?? '') === 'beku', json_encode($r));
 $kidStudio = (int) satu('SELECT kebutuhan_id FROM alokasi_barang WHERE id = :a', ['a' => $aStudio]);
 $h = minta('browserB', SA, $D, ['id' => (string) $p1], ['aksi' => 'hapus_kebutuhan', 'id' => (string) $kidStudio]);
 cek('S08c kebutuhan yang alokasinya sudah keluar tidak bisa dihapus', (int) satu('SELECT COUNT(*) FROM kebutuhan_proyek WHERE id = :k', ['k' => $kidStudio]) === 1, $h['pesan']);
@@ -480,6 +487,7 @@ $p2 = buat_proyek_uji('UJI4A Dua', '2027-03-20');
 $aRental2 = alokasi_uji($p2, 'UJI4A Lighting Dua', 3, ['sumber' => 'Rental', 'nama_barang' => 'Lampu Dua', 'vendor' => 'Vendor 4A', 'jumlah' => '1']);
 minta('admin', SA, 'pages/perlengkapan.php', ['tab' => 'eksternal'], ['aksi' => 'terima_rental', 'id' => (string) $aRental2, 'proyek_id' => (string) $p2,
     'jumlah' => '1', 'waktu' => '2026-11-07T00:01', 'kondisi' => 'Baik', 'catatan' => '', 'konfirmasi' => '1']);
+uji_konfirmasi_persiapan('admin', $p2, [$aRental2]);
 fungsi('keluar', $p2, $aRental2);
 $h = minta('admin', SA, 'pages/perlengkapan.php', ['tab' => 'eksternal'], ['aksi' => 'kembalikan_vendor', 'id' => (string) $aRental2, 'proyek_id' => (string) $p2,
     'jumlah' => '1', 'waktu' => waktu_kini(), 'kondisi' => 'Baik', 'catatan' => '', 'konfirmasi' => '1']);
@@ -490,6 +498,7 @@ echo "\n== S09–S11 Bersamaan\n";
 // S09a: dua request keluar untuk alokasi yang sama.
 $p3 = buat_proyek_uji('UJI4A Tiga', '2027-03-25');
 $a3 = alokasi_uji($p3, 'UJI4A Unit Tiga', (int) $U2['kategori_id'], ['sumber' => 'Studio', 'perlengkapan_id' => (string) $U2['id']]);
+uji_konfirmasi_persiapan('admin', $p3, [$a3]);
 [$x, $y] = paralel(['--fungsi', 'keluar', 'pA' . mt_rand(), (string) $p3, (string) $a3], ['--fungsi', 'keluar', 'pB' . mt_rand(), (string) $p3, (string) $a3]);
 $st = [$x['status'] ?? '?', $y['status'] ?? '?'];
 sort($st);
@@ -499,6 +508,8 @@ $p4 = buat_proyek_uji('UJI4A Empat', '2027-04-05');
 $p5 = buat_proyek_uji('UJI4A Lima', '2027-04-15');
 $a4 = alokasi_uji($p4, 'UJI4A Unit Empat', (int) $U3['kategori_id'], ['sumber' => 'Studio', 'perlengkapan_id' => (string) $U3['id']]);
 $a5 = alokasi_uji($p5, 'UJI4A Unit Lima', (int) $U3['kategori_id'], ['sumber' => 'Studio', 'perlengkapan_id' => (string) $U3['id']]);
+uji_konfirmasi_persiapan('admin', $p4, [$a4]);
+uji_konfirmasi_persiapan('admin', $p5, [$a5]);
 [$x, $y] = paralel(['--fungsi', 'keluar', 'pA' . mt_rand(), (string) $p4, (string) $a4], ['--fungsi', 'keluar', 'pB' . mt_rand(), (string) $p5, (string) $a5]);
 $st = [$x['status'] ?? '?', $y['status'] ?? '?'];
 sort($st);
@@ -511,23 +522,27 @@ $st = [$x['status'] ?? '?', $y['status'] ?? '?'];
 sort($st);
 cek('S10 dua pengembalian bersamaan tidak melebihi sisa -> satu tercatat, satu ditolak', $st === ['ditolak', 'ok'] && saldo($aKru)['jumlah_kembali'] === 2 && saldo($aKru)['sisa'] === 0,
     json_encode([$x, $y], JSON_UNESCAPED_UNICODE));
-// S11: barang keluar bersamaan dengan pembatalan alokasi (dua putaran, unit berbeda).
+// S11: sejak Sprint 4B alokasi tidak bisa dibatalkan selama persiapan dikonfirmasi, sedangkan barang keluar MENSYARATKAN
+// konfirmasi. Jalur pembatalannya: buka ulang persiapan lalu batalkan. Yang diuji: barang keluar bersamaan dengan buka ulang
+// persiapan (dua putaran, unit berbeda), lalu pembatalan alokasi.
 foreach ([$U4, $U5] as $i => $u) {
     $pid = buat_proyek_uji('UJI4A Balapan ' . ($i + 1), '2027-04-2' . ($i + 1));
     $aid = alokasi_uji($pid, 'UJI4A Unit Balapan ' . ($i + 1), (int) $u['kategori_id'], ['sumber' => 'Studio', 'perlengkapan_id' => (string) $u['id']]);
-    [$x, $y] = paralel(['--fungsi', 'keluar', 'pA' . mt_rand(), (string) $pid, (string) $aid], ['--fungsi', 'status', 'pB' . mt_rand(), (string) $pid, (string) $aid, 'batalkan']);
+    uji_konfirmasi_persiapan('admin', $pid, [$aid]);
+    [$x, $y] = paralel(['--fungsi', 'keluar', 'pA' . mt_rand(), (string) $pid, (string) $aid], ['--fungsi', 'buka', 'pB' . mt_rand(), (string) $pid, '0']);
+    $batal = fungsi('status', $pid, $aid, ['batalkan']);
     $status = satu('SELECT status FROM alokasi_barang WHERE id = :a', ['a' => $aid]);
     $keluar = jumlah_keluar_detail($aid);
-    $sah = ($status === 'Dikonfirmasi' && $keluar === 1 && ($x['status'] ?? '') === 'ok' && ($y['status'] ?? '') === 'punya_serah')
-        || ($status === 'Dibatalkan' && $keluar === 0 && ($y['status'] ?? '') === 'ok' && ($x['status'] ?? '') === 'ditolak');
-    cek('S11 (' . ($i + 1) . ') keluar vs batal bersamaan -> hasil sah (keluar & alokasi tetap, ATAU batal & tidak keluar)', $sah,
-        json_encode(['keluar' => $x, 'batal' => $y, 'status' => $status, 'detail_keluar' => $keluar], JSON_UNESCAPED_UNICODE));
+    $sah = ($keluar === 1 && $status === 'Dikonfirmasi' && ($x['status'] ?? '') === 'ok' && ($y['status'] ?? '') === 'beku' && in_array($batal['status'] ?? '', ['persiapan_terkunci', 'punya_serah'], true))
+        || ($keluar === 0 && $status === 'Dibatalkan' && ($y['status'] ?? '') === 'ok' && ($x['status'] ?? '') === 'ditolak' && ($batal['status'] ?? '') === 'ok');
+    cek('S11 (' . ($i + 1) . ') keluar vs buka ulang persiapan bersamaan, lalu batal -> hasil sah (keluar & alokasi tetap, ATAU dibuka, batal, tidak keluar)', $sah,
+        json_encode(['keluar' => $x, 'buka' => $y, 'batal' => $batal, 'status' => $status, 'detail_keluar' => $keluar], JSON_UNESCAPED_UNICODE));
 }
 
 echo "\n== S13–S15 Hak akses, CSRF, rollback\n";
 $p6 = buat_proyek_uji('UJI4A Enam', '2027-04-28');
 $a6 = alokasi_uji($p6, 'UJI4A Unit Enam', (int) $U6['kategori_id'], ['sumber' => 'Studio', 'perlengkapan_id' => (string) $U6['id']]);
-konfirmasi_persiapan('admin', $p6, [$a6]);
+uji_konfirmasi_persiapan('admin', $p6, [$a6]);
 $sebelum = trx_baru();
 $h = minta('rizky', RIZKY, $S, [], form_keluar($p6, [$a6 => 1]));
 cek('S13a User/Kru mencatat barang keluar lewat POST langsung ditolak', trx_baru() === $sebelum, $h['pesan']);
@@ -550,13 +565,22 @@ cek('S15b pengembalian Rusak: langkah terakhir gagal -> transaksi, kondisi unit,
     && (int) satu('SELECT COUNT(*) FROM riwayat_aktivitas') === $riwayat_sebelum, $r);
 
 echo "\n== S18 Persiapan\n";
-$h = minta('browserBaru', SA, $S, [], form_keluar($p6, [$a6 => 1]));
-cek('S18a browser yang belum mengonfirmasi persiapan tidak bisa mencatat barang keluar (gerbang tidak terlewati)', trx_baru() === $sebelum
+// Sejak Sprint 4B konfirmasi persiapan ada di PostgreSQL: tanpa konfirmasi semua browser ditolak; setelah dikonfirmasi
+// (di browser mana pun), browser lain yang berwenang boleh mencatat barang keluar.
+$p7 = buat_proyek_uji('UJI4A Tujuh', '2027-04-30');
+$a7 = alokasi_uji($p7, 'UJI4A Kru Tujuh', 5, ['sumber' => 'Milik Kru', 'nama_barang' => 'SD Card Tujuh', 'pemilik_id' => (string) NINA, 'jumlah' => '1']);
+$h = minta('browserBaru', SA, $S, [], form_keluar($p7, [$a7 => 1]));
+cek('S18a tanpa konfirmasi persiapan (PostgreSQL), barang keluar ditolak (gerbang tidak terlewati)', jumlah_keluar_detail($a7) === 0
     && str_contains($h['pesan'], 'belum bisa dicatat'), $h['pesan']);
+$r = fungsi('keluar', $p7, $a7);
+cek('S18e ditolak juga di dalam transaksi PostgreSQL (tanpa gerbang halaman)', ($r['status'] ?? '') === 'ditolak' && jumlah_keluar_detail($a7) === 0, $r['masalah'] ?? '');
+uji_konfirmasi_persiapan('admin', $p7, [$a7]);
+$h = minta('browserBaru', SA, $S, [], form_keluar($p7, [$a7 => 1]));
+cek('S18b persiapan dikonfirmasi di browser A, barang keluar dicatat dari browser B', jumlah_keluar_detail($a7) === 1, $h['pesan'] . $h['galat']);
+$h = minta('admin', SA, $S, [], form_keluar($p7, [$a7 => 1]));
+cek('S18c setelah keluar, browser lain tetap tidak bisa mengeluarkannya lagi', jumlah_keluar_detail($a7) === 1, $h['pesan']);
 $h = minta('admin', SA, $S, [], form_keluar($p6, [$a6 => 1]));
-cek('S18b browser yang mengonfirmasi persiapan mencatat barang keluar', jumlah_keluar_detail($a6) === 1, $h['pesan'] . $h['galat']);
-$h = minta('browserBaru', SA, $S, [], form_keluar($p6, [$a6 => 1]));
-cek('S18c setelah keluar, browser lain tetap tidak bisa mengeluarkannya lagi', jumlah_keluar_detail($a6) === 1, $h['pesan']);
+cek('S18f proyek lain yang dikonfirmasi tetap bisa mengeluarkan barang', jumlah_keluar_detail($a6) === 1, $h['pesan'] . $h['galat']);
 $h = minta('browserBaru', SA, $D, ['id' => (string) $p6, 'tab' => 'persiapan']);
 cek('S18d halaman Persiapan di browser lain tetap tampil (barang sudah keluar terbaca dari PostgreSQL)', bersih($h) && $h['html'] !== '');
 

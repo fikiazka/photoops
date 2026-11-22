@@ -143,8 +143,12 @@ if (($argv[1] ?? '') === '--fungsi') {
             echo 'GAGAL_PDO:' . $e->getCode();
         }
     } elseif ($jenis === 'deadline_lama') {
-        // Konfirmasi lama tanpa snapshot deadline (entri id 1) -> harus memakai nilai 'lama' perubahan deadline di PostgreSQL.
-        echo json_encode(deadline_saat_konfirmasi(konteks_log_proyek([]), cari_proyek((int) $argv[3]), ['id' => 1]));
+        // Sejak Sprint 4B log konfirmasi di PostgreSQL: deadline saat konfirmasi = nilai 'lama' perubahan deadline pertama
+        // yang id log-nya lebih besar dari id log konfirmasi terakhir proyek ini.
+        $proyek = cari_proyek((int) $argv[3]);
+        $id_log = (int) (sql_satu("SELECT MAX(id) AS id FROM riwayat_aktivitas WHERE aksi = 'Persiapan' AND baru = 'Dikonfirmasi Selesai' AND objek = :o",
+            ['o' => $proyek['kode']])['id'] ?? 0);
+        echo json_encode(deadline_saat_konfirmasi(konteks_log_proyek(), $proyek, $id_log));
     } elseif ($jenis === 'id_proyek') {
         echo json_encode(id_proyek_pengguna((int) $argv[3]));
     }
@@ -470,13 +474,15 @@ cek('Q14d lepas kru: riwayat gagal -> kru tidak berkurang', str_starts_with($r, 
 jalankan('DELETE FROM anggota_proyek WHERE id = :i', ['i' => $id_bagas]);
 
 echo "\n== D. Deadline persiapan dan riwayat\n";
-// Q15 konfirmasi persiapan (session), lalu deadline diubah lebih awal (PostgreSQL)
+// Q15 konfirmasi persiapan (PostgreSQL sejak 4B), lalu deadline diubah lebih awal
 $h = minta('admin', SA, $D, ['id' => (string) $pid1], ['aksi' => 'simpan_persiapan', 'diperiksa' => [(string) $alokasi_nina]]);
 $h = minta('admin', SA, $D, ['id' => (string) $pid1], ['aksi' => 'konfirmasi_persiapan', 'proyek_id' => (string) $pid1, 'konfirmasi' => '1']);
-$s = json_decode(anak(['--periksa-sesi', 'admin', (string) $pid1]), true);
-$konf = end($s['konfirmasi']) ?: [];
-cek('Q15a persiapan proyek PostgreSQL dikonfirmasi; log konfirmasi menyimpan snapshot deadline',
-    str_contains($h['pesan'], 'dikonfirmasi selesai') && ($konf['deadline'] ?? '') === '2026-11-20 20:00', $h['pesan'] . ' ' . json_encode($konf, JSON_UNESCAPED_UNICODE));
+// Sejak Sprint 4B konfirmasi dan lognya di PostgreSQL; batas persiapan saat konfirmasi tercatat di keterangan log.
+$konf = (int) satu("SELECT COUNT(*) FROM riwayat_aktivitas WHERE aksi = 'Persiapan' AND objek = :o AND baru = 'Dikonfirmasi Selesai'
+                    AND keterangan LIKE '%batas persiapan 2026-11-20 20:00'", ['o' => $p1['kode']]);
+cek('Q15a persiapan proyek PostgreSQL dikonfirmasi; log konfirmasi mencatat batas persiapan saat itu',
+    str_contains($h['pesan'], 'dikonfirmasi selesai') && $konf === 1
+    && satu('SELECT dikonfirmasi_pada FROM persiapan_proyek WHERE proyek_id = :p', ['p' => $pid1]) !== null, $h['pesan']);
 $h = minta('admin', SA, $D, ['id' => (string) $pid1], form_dari_db(proyek_db('UJI3A Satu'), ['deadline_persiapan' => '2026-11-01T20:00']));
 cek('Q15b deadline diubah lebih awal + riwayat "Deadline persiapan diubah" (lama -> baru) di PostgreSQL',
     proyek_db('UJI3A Satu')['deadline_persiapan'] === '2026-11-01 20:00'
@@ -487,7 +493,7 @@ $baris = $pos === false ? '' : substr($h['html'], $pos, (strpos($h['html'], '</l
 cek('Q15c Riwayat: konfirmasi tetap "Tepat Waktu" terhadap deadline saat konfirmasi, dengan catatan deadline diubah',
     bersih($h) && str_contains($baris, 'Tepat Waktu') && !str_contains($baris, 'Terlambat') && str_contains($baris, 'Deadline diubah setelah konfirmasi'), strip_tags(substr($baris, 0, 400)));
 $r = json_decode(anak(['--fungsi', 'deadline_lama', (string) $pid1]), true);
-cek('Q15d konfirmasi lama tanpa snapshot memakai nilai lama dari log perubahan deadline di PostgreSQL',
+cek('Q15d deadline saat konfirmasi dihitung dari urutan id log PostgreSQL (nilai lama perubahan deadline sesudahnya)',
     ($r['deadline'] ?? '') === '2026-11-20 20:00' && ($r['berubah'] ?? false) === true, json_encode($r));
 $h = minta('admin', SA, $D, ['id' => (string) $pid1, 'tab' => 'persiapan']);
 cek('Q15e perubahan deadline tidak mencabut konfirmasi persiapan', bersih($h) && str_contains($h['html'], 'Persiapan Dikonfirmasi Selesai'));

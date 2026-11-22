@@ -8,7 +8,7 @@ if (!is_post()) {
 
 cek_csrf();
 
-// Identitas login dihapus. Data prototipe modul operasional ($_SESSION['db']) tetap disimpan seperti sebelumnya.
+// Identitas login dihapus. Data session modul yang belum dimigrasikan ($_SESSION['db']: insiden) tetap disimpan.
 unset($_SESSION['user_id'], $_SESSION['csrf'], $_SESSION['_form'], $_SESSION['_sandi_sementara']);
 session_regenerate_id(true);
 flash('info', 'Anda telah keluar.');

@@ -16,7 +16,7 @@ const KOLOM_ALOKASI = "a.id, k.proyek_id, a.kebutuhan_id, a.sumber, a.perlengkap
     TO_CHAR(a.diterima_pada, 'YYYY-MM-DD HH24:MI') AS diterima_pada, a.diterima_oleh, a.kondisi_terima, a.catatan_terima,
     TO_CHAR(a.sewa_mulai, 'YYYY-MM-DD') AS sewa_mulai, TO_CHAR(a.jatuh_tempo_vendor, 'YYYY-MM-DD') AS jatuh_tempo_vendor, a.kontak_vendor,
     TO_CHAR(a.dikembalikan_vendor_pada, 'YYYY-MM-DD HH24:MI') AS dikembalikan_vendor_pada, a.dikembalikan_vendor_oleh,
-    a.kondisi_kembali_vendor, a.catatan_kembali_vendor";
+    a.kondisi_kembali_vendor, a.catatan_kembali_vendor, a.diperiksa::int AS diperiksa";
 
 const DARI_ALOKASI = ' FROM alokasi_barang a JOIN kebutuhan_proyek k ON k.id = a.kebutuhan_id';
 
@@ -28,7 +28,16 @@ function alokasi_dari_baris(array $baris): array
     foreach (['perlengkapan_id', 'pemilik_id', 'diterima_oleh', 'dikembalikan_vendor_oleh'] as $kolom) {
         $baris[$kolom] = $baris[$kolom] === null ? null : (int) $baris[$kolom];
     }
+    // Centang checklist persiapan (Sprint 4B). Hanya alokasi Dikonfirmasi yang boleh TRUE (CHECK ck_alokasi_diperiksa).
+    $baris['diperiksa'] = (bool) (int) $baris['diperiksa'];
     return $baris;
+}
+
+// Persiapan proyek sudah dikonfirmasi (PostgreSQL). Dipanggil di dalam transaksi SETELAH kunci_proyek(): konfirmasi dan
+// pembukaan ulang persiapan juga mengunci baris proyek lebih dulu, jadi hasil ini tidak bisa berubah sampai COMMIT.
+function persiapan_dikonfirmasi_db(int $proyek_id): bool
+{
+    return (bool) sql_satu('SELECT 1 FROM persiapan_proyek WHERE proyek_id = :p AND dikonfirmasi_pada IS NOT NULL', ['p' => $proyek_id]);
 }
 
 // Semua kebutuhan, ber-key id. Dibaca sekali per request; $muat_ulang = true sesudah ada perubahan.
@@ -142,6 +151,9 @@ function simpan_kebutuhan(int $proyek_id, int $id, array $isi): array
         if (!$proyek || !proyek_aktif($proyek)) {
             return ['status' => 'proyek_tutup'];
         }
+        if (persiapan_dikonfirmasi_db($proyek_id)) {
+            return ['status' => 'persiapan_terkunci'];
+        }
         if (!$id) {
             sql_jalankan('INSERT INTO kebutuhan_proyek (proyek_id, nama, acuan, kategori_id, jumlah)
                           VALUES (:proyek_id, :nama, :acuan, :kategori_id, :jumlah)', $isi + ['proyek_id' => $proyek_id]);
@@ -180,6 +192,9 @@ function hapus_kebutuhan(int $proyek_id, int $id): array
         if (!$proyek || !proyek_aktif($proyek)) {
             return ['status' => 'proyek_tutup'];
         }
+        if (persiapan_dikonfirmasi_db($proyek_id)) {
+            return ['status' => 'persiapan_terkunci'];
+        }
         $k = sql_satu('SELECT nama FROM kebutuhan_proyek WHERE id = :id AND proyek_id = :proyek_id FOR UPDATE', ['id' => $id, 'proyek_id' => $proyek_id]);
         if (!$k) {
             return ['status' => 'tidak_ada'];
@@ -210,6 +225,9 @@ function isi_kebutuhan_dari_preset(int $proyek_id, int $preset_id): array
         $proyek = kunci_proyek($proyek_id);
         if (!$proyek || !proyek_aktif($proyek)) {
             return ['status' => 'proyek_tutup'];
+        }
+        if (persiapan_dikonfirmasi_db($proyek_id)) {
+            return ['status' => 'persiapan_terkunci'];
         }
         $preset = sql_satu('SELECT nama FROM preset_perlengkapan WHERE id = :id FOR SHARE', ['id' => $preset_id]);
         if (!$preset) {
@@ -275,6 +293,9 @@ function tambah_alokasi(int $proyek_id, int $kebutuhan_id, array $isi): array
         $proyek = kunci_proyek($proyek_id);
         if (!$proyek || !proyek_aktif($proyek)) {
             return ['status' => 'proyek_tutup'];
+        }
+        if (persiapan_dikonfirmasi_db($proyek_id)) {
+            return ['status' => 'persiapan_terkunci'];
         }
         $k = sql_satu('SELECT nama, kategori_id, jumlah FROM kebutuhan_proyek WHERE id = :id AND proyek_id = :proyek_id FOR UPDATE',
             ['id' => $kebutuhan_id, 'proyek_id' => $proyek_id]);
@@ -353,6 +374,9 @@ function ubah_status_alokasi(int $proyek_id, int $alokasi_id, string $aksi): arr
         if (!$proyek || !proyek_aktif($proyek)) {
             return ['status' => 'proyek_tutup'];
         }
+        if (persiapan_dikonfirmasi_db($proyek_id)) {
+            return ['status' => 'persiapan_terkunci'];
+        }
         $baris = sql_satu('SELECT ' . KOLOM_ALOKASI . DARI_ALOKASI . ' WHERE a.id = :id AND k.proyek_id = :proyek_id FOR UPDATE OF a',
             ['id' => $alokasi_id, 'proyek_id' => $proyek_id]);
         if (!$baris) {
@@ -384,7 +408,8 @@ function ubah_status_alokasi(int $proyek_id, int $alokasi_id, string $aksi): arr
             return ['status' => 'rental_diterima', 'lama' => $a];
         }
         if ($aksi === 'batalkan') {
-            sql_jalankan("UPDATE alokasi_barang SET status = 'Dibatalkan' WHERE id = :id", ['id' => $alokasi_id]);
+            // Centang persiapan ikut dilepas (CHECK ck_alokasi_diperiksa: hanya alokasi Dikonfirmasi yang boleh dicentang).
+            sql_jalankan("UPDATE alokasi_barang SET status = 'Dibatalkan', diperiksa = FALSE WHERE id = :id", ['id' => $alokasi_id]);
             catat_riwayat_proyek('Alokasi', $nama . ' · ' . $proyek['kode'], 'Alokasi dibatalkan', $a['status'], 'Dibatalkan');
             return ['status' => 'ok', 'lama' => $a];
         }
@@ -401,12 +426,17 @@ function ubah_status_alokasi(int $proyek_id, int $alokasi_id, string $aksi): arr
 // Catatan Rental (terima dari vendor, kembali ke vendor, jatuh tempo) pada baris alokasi.
 // $syarat adalah kondisi SQL tetap dari kode (bukan input pengguna) yang harus masih berlaku saat UPDATE, misalnya
 // "diterima_pada IS NULL"; bila request lain sudah lebih dulu mengubahnya, tidak ada baris yang berubah dan hasilnya false.
-function simpan_catatan_rental(int $alokasi_id, array $kolom, string $syarat, array $syarat_param, array $riwayat): bool
+// $lepas_centang = true: centang persiapan alokasi ini ikut dilepas (penerimaan vendor: barang harus diperiksa ulang).
+function simpan_catatan_rental(int $alokasi_id, array $kolom, string $syarat, array $syarat_param, array $riwayat, bool $lepas_centang = false): bool
 {
-    $set = implode(', ', array_map(fn ($k) => $k . ' = :' . $k, array_keys($kolom)));
+    $set = implode(', ', array_map(fn ($k) => $k . ' = :' . $k, array_keys($kolom))) . ($lepas_centang ? ', diperiksa = FALSE' : '');
     $berhasil = sql_transaksi(function () use ($alokasi_id, $kolom, $set, $syarat, $syarat_param, $riwayat) {
-        // Kunci baris dulu (sama dengan proses_checkout), lalu UPDATE sebagai perintah baru yang melihat data terbaru
-        // (misalnya barang keluar yang baru saja dicatat browser lain).
+        // Urutan kunci sama dengan modul lain: proyek -> alokasi. Lalu UPDATE sebagai perintah baru yang melihat data terbaru
+        // (misalnya barang keluar atau konfirmasi persiapan yang baru saja dicatat browser lain).
+        $proyek_id = (int) (sql_satu('SELECT k.proyek_id FROM alokasi_barang a JOIN kebutuhan_proyek k ON k.id = a.kebutuhan_id WHERE a.id = :id', ['id' => $alokasi_id])['proyek_id'] ?? 0);
+        if (!$proyek_id || !kunci_proyek($proyek_id)) {
+            return false;
+        }
         sql_jalankan('SELECT id FROM alokasi_barang WHERE id = :id FOR UPDATE', ['id' => $alokasi_id]);
         $ubah = sql_jalankan("UPDATE alokasi_barang SET $set WHERE id = :id AND sumber = 'Rental' AND ($syarat)", $kolom + $syarat_param + ['id' => $alokasi_id]);
         if ($ubah->rowCount() !== 1) {
