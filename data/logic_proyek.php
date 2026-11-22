@@ -73,7 +73,7 @@ function semua_anggota(bool $muat_ulang = false): array
 }
 
 // Penanda bahwa proyek/tim berubah di PostgreSQL pada request ini. Bootstrap memakainya untuk menjalankan
-// sinkron_konfirmasi_persiapan(), karena perubahan di PostgreSQL tidak mengubah $_SESSION['db'].
+// sinkron_konfirmasi_persiapan() sesudah POST (konfirmasi persiapan yang syaratnya tidak lagi terpenuhi dicabut).
 function proyek_berubah(?bool $atur = null): bool
 {
     static $berubah = false;
@@ -398,34 +398,6 @@ function jumlah_alokasi(array $alokasi): int
     return max(1, (int) ($alokasi['jumlah'] ?? 1));
 }
 
-function rekam_persiapan(int $proyek_id): ?array
-{
-    foreach (db('persiapan') as $baris) {
-        if ((int) $baris['proyek_id'] === $proyek_id) {
-            return $baris;
-        }
-    }
-    return null;
-}
-
-function id_diperiksa(int $proyek_id): array
-{
-    return array_map('intval', rekam_persiapan($proyek_id)['diperiksa'] ?? []);
-}
-
-function lepas_dari_checklist(int $proyek_id, array $alokasi_ids): void
-{
-    $rekam = rekam_persiapan($proyek_id);
-    if (!$rekam) {
-        return;
-    }
-    $lama = array_map('intval', $rekam['diperiksa'] ?? []);
-    $baru = array_values(array_diff($lama, array_map('intval', $alokasi_ids)));
-    if (count($baru) !== count($lama)) {
-        db_ubah('persiapan', (int) $rekam['id'], ['diperiksa' => $baru]);
-    }
-}
-
 function alokasi_bisa_diperiksa(array $alokasi): bool
 {
     return $alokasi['status'] === 'Dikonfirmasi' && ($alokasi['sumber'] !== 'Rental' || !empty($alokasi['diterima_pada']));
@@ -584,17 +556,6 @@ function label_status_alokasi(array $alokasi): string
         return $peta[$alokasi['status']] ?? $alokasi['status'];
     }
     return $alokasi['status'];
-}
-
-function ambil_persiapan(int $proyek_id): array
-{
-    foreach (db('persiapan') as $baris) {
-        if ((int) $baris['proyek_id'] === $proyek_id) {
-            return $baris;
-        }
-    }
-    $id = db_tambah('persiapan', ['proyek_id' => $proyek_id, 'diperiksa' => [], 'diperbarui_pada' => null, 'diperbarui_oleh' => null]);
-    return db_cari('persiapan', $id);
 }
 
 function persiapan_proyek(array $proyek): array
@@ -781,53 +742,6 @@ function penilaian_persiapan(array $proyek): array
         'boleh_buka' => $pada && $aktif && !$beku,
         'perlu_cabut' => $pada && $aktif && !$beku && !$syarat['siap'],
     ];
-}
-
-function wajib_persiapan_terbuka(array $proyek): void
-{
-    $rekam = rekam_persiapan((int) $proyek['id']);
-    if (!proyek_aktif($proyek) || empty($rekam['dikonfirmasi_pada'])) {
-        return;
-    }
-    flash('error', 'Persiapan ' . $proyek['kode'] . ' sudah dikonfirmasi selesai oleh ' . nama_pengguna($rekam['dikonfirmasi_oleh']) . ' pada ' . tgl($rekam['dikonfirmasi_pada'], 'lengkap') . '. Kebutuhan, alokasi, dan checklist dikunci selama konfirmasi berlaku. Buka ulang persiapan di tab Persiapan jika memang perlu diubah.');
-    muat_ulang();
-}
-
-function cabut_konfirmasi_persiapan(array $proyek, array $rekam, string $alasan, bool $otomatis): void
-{
-    db_ubah('persiapan', (int) $rekam['id'], [
-        'dikonfirmasi_pada' => null,
-        'dikonfirmasi_oleh' => null,
-        'konfirmasi_batal' => [
-            'pada' => date('Y-m-d H:i', strtotime(sekarang())),
-            'oleh' => $_SESSION['user_id'] ?? null,
-            'otomatis' => $otomatis,
-            'alasan' => $alasan,
-            'dikonfirmasi_pada' => $rekam['dikonfirmasi_pada'],
-            'dikonfirmasi_oleh' => $rekam['dikonfirmasi_oleh'],
-        ],
-    ]);
-    catat_riwayat('Persiapan', $proyek['kode'], ($otomatis ? 'Konfirmasi persiapan selesai tidak berlaku lagi: ' : 'Persiapan dibuka ulang: ') . $alasan, 'Dikonfirmasi Selesai', $otomatis ? 'Perlu konfirmasi ulang' : 'Dibuka ulang');
-}
-
-function sinkron_konfirmasi_persiapan(): void
-{
-    foreach (db('persiapan') as $rekam) {
-        if (empty($rekam['dikonfirmasi_pada'])) {
-            continue;
-        }
-        $proyek = cari_proyek((int) $rekam['proyek_id']);
-        if (!$proyek) {
-            continue;
-        }
-        $nilai = penilaian_persiapan($proyek);
-        if (!$nilai['perlu_cabut']) {
-            continue;
-        }
-        $alasan = implode(' ', $nilai['syarat']['masalah']);
-        cabut_konfirmasi_persiapan($proyek, $rekam, $alasan, true);
-        flash('info', 'Konfirmasi persiapan ' . $proyek['kode'] . ' tidak berlaku lagi karena data berubah: ' . $alasan . ' Periksa ulang lalu konfirmasi kembali.');
-    }
 }
 
 // Validasi sebelum menyimpan; batasnya sama dengan kolom/CHECK di tabel proyek agar galat tampil di form, bukan 503.

@@ -609,7 +609,9 @@ minta('admin', SA, $D, ['id' => (string) $pC], ['aksi' => 'hapus_kebutuhan', 'id
 minta('admin', SA, $D, ['id' => (string) $pC], ['aksi' => 'hapus_kebutuhan', 'id' => (string) $kKosong]);
 $h = minta('admin', SA, $D, ['id' => (string) $pC], ['aksi' => 'simpan_persiapan', 'diperiksa' => [(string) $aC]]);
 $s = json_decode(anak(['--periksa-sesi', 'admin']), true);
-cek('K17a checklist persiapan (session) menyimpan id alokasi PostgreSQL', in_array($aC, $s['persiapan'][$pC] ?? [], true), $h['pesan']);
+// Sejak Sprint 4B checklist tersimpan di alokasi_barang.diperiksa (PostgreSQL), bukan di session.
+cek('K17a checklist persiapan tersimpan di PostgreSQL (alokasi_barang.diperiksa)', satu('SELECT diperiksa::int FROM alokasi_barang WHERE id = :a', ['a' => $aC]) === 1
+    && ($s['persiapan'] ?? []) === [], $h['pesan']);
 $h = minta('admin', SA, $D, ['id' => (string) $pC], ['aksi' => 'konfirmasi_persiapan', 'proyek_id' => (string) $pC, 'konfirmasi' => '1']);
 cek('K17b persiapan proyek dengan alokasi PostgreSQL bisa dikonfirmasi', str_contains($h['pesan'], 'dikonfirmasi selesai'), $h['pesan']);
 $h = minta('admin', SA, 'pages/serah-terima.php', [], ['aksi' => 'checkout', 'proyek_id' => (string) $pC, 'alokasi' => [(string) $aC], 'jumlah' => [(string) $aC => '1'],
@@ -627,9 +629,9 @@ $h = minta('admin', SA, $D, ['id' => (string) $pF, 'tab' => 'kebutuhan']);
 cek('K17f catatan "masih keluar" muncul untuk unit itu di proyek lain yang jadwalnya tidak bentrok', bersih($h) && str_contains($h['html'], 'Masih keluar di ' . satu('SELECT kode FROM proyek WHERE id = :p', ['p' => $pC])));
 $h = minta('baru', SA, $D, ['id' => '7', 'tab' => 'serah']);
 $s = json_decode(anak(['--periksa-sesi', 'baru']), true);
-// Sejak Sprint 4A serah terima (TRX-044/045) dibaca dari PostgreSQL; session hanya menyimpan centang persiapan.
+// Sejak Sprint 4A/4B serah terima (TRX-044/045) dan centang persiapan (#41) dibaca dari PostgreSQL.
 cek('K17g seed session selaras dengan PostgreSQL: alokasi #41 dicentang di persiapan PRJ-025, TRX-044/045 dari PostgreSQL', bersih($h) && str_contains($h['html'], 'SD Card 64GB')
-    && in_array(41, $s['persiapan'][7] ?? [], true) && ($s['transaksi'] ?? ['x']) === [] && str_contains($h['html'], 'TRX-044'));
+    && satu('SELECT diperiksa::int FROM alokasi_barang WHERE id = 41') === 1 && ($s['transaksi'] ?? ['x']) === [] && str_contains($h['html'], 'TRX-044'));
 $masalah = [];
 foreach ([[SA, 'pages/dashboard-admin.php', []], [PI, 'pages/dashboard-petugas.php', []], [RIZKY, 'pages/dashboard-user.php', []], [SA, 'pages/serah-terima.php', []],
     [SA, 'pages/perlengkapan.php', ['tab' => 'eksternal']], [SA, 'pages/riwayat.php', []], [SA, $D, ['id' => (string) $pA, 'tab' => 'persiapan']],

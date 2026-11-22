@@ -1,8 +1,8 @@
 <?php
 defined('ROOT') || exit;
 
-// Log session untuk modul yang belum dimigrasikan. $ekstra = kolom tambahan, mis. snapshot 'deadline' pada konfirmasi persiapan.
-function catat_riwayat(string $aksi, string $objek, string $keterangan, string $lama = '', string $baru = '', array $ekstra = []): void
+// Log session untuk modul yang belum dimigrasikan (sejak Sprint 4B hanya Insiden).
+function catat_riwayat(string $aksi, string $objek, string $keterangan, string $lama = '', string $baru = ''): void
 {
     db_tambah('riwayat', [
         'waktu' => date('Y-m-d H:i', strtotime(sekarang())),
@@ -12,13 +12,13 @@ function catat_riwayat(string $aksi, string $objek, string $keterangan, string $
         'keterangan' => $keterangan,
         'lama' => $lama,
         'baru' => $baru,
-    ] + $ekstra);
+    ]);
 }
 
-// Audit Proyek dan Tim (Sprint Backend 3A), Kebutuhan, Alokasi, Rental (3C), serta Barang Keluar dan Pengembalian (4A)
-// di PostgreSQL; dipanggil di dalam transaksi yang sama dengan perubahannya.
-// Waktunya memakai sekarang() (jam aplikasi), sama dengan log Persiapan di session, karena log ini
-// ditampilkan berdampingan dan dibaca bersama di halaman Riwayat.
+// Audit Proyek dan Tim (Sprint Backend 3A), Kebutuhan, Alokasi, Rental (3C), Barang Keluar dan Pengembalian (4A), serta
+// Persiapan (4B) di PostgreSQL; dipanggil di dalam transaksi yang sama dengan perubahannya.
+// Waktunya memakai sekarang() (jam aplikasi), sama dengan log Insiden di session, karena log ini
+// ditampilkan berdampingan di halaman Riwayat.
 function catat_riwayat_proyek(string $aksi, string $objek, string $keterangan, string $lama = '', string $baru = ''): void
 {
     sql_jalankan('INSERT INTO riwayat_aktivitas (waktu, pengguna_id, aksi, objek, keterangan, lama, baru)
@@ -69,8 +69,8 @@ function catat_riwayat_preset(string $objek, string $keterangan, string $lama = 
     catat_riwayat_proyek('Preset', $objek, $keterangan, $lama, $baru);
 }
 
-// Aksi riwayat yang sumbernya PostgreSQL. Aksi lain masih dari log session.
-const AKSI_RIWAYAT_DB = ['Pengguna', 'Perlengkapan', 'Proyek', 'Tim', 'Preset', 'Kebutuhan', 'Alokasi', 'Rental', 'Barang Keluar', 'Pengembalian'];
+// Aksi riwayat yang sumbernya PostgreSQL. Sisanya (Insiden) masih dari log session sampai Insiden dimigrasikan.
+const AKSI_RIWAYAT_DB = ['Pengguna', 'Perlengkapan', 'Proyek', 'Tim', 'Preset', 'Kebutuhan', 'Alokasi', 'Rental', 'Barang Keluar', 'Pengembalian', 'Persiapan'];
 
 // Halaman Riwayat: log session (selain AKSI_RIWAYAT_DB) digabung dengan audit dari PostgreSQL.
 // Tabel riwayat_aktivitas juga berisi data contoh aksi lain (Alokasi, Insiden, ...) yang sama dengan log session;
@@ -111,8 +111,8 @@ function ikon_aksi(string $aksi): string
 
 /*
  * Sprint 3E: ketepatan waktu persiapan di Riwayat Aktivitas.
- * Log audit ($_SESSION['db']['riwayat']) tetap disimpan dan ditampilkan apa adanya; fungsi di bawah hanya MEMBACA log
- * untuk memberi keterangan pada baris aksi "Persiapan" (konfirmasi selesai, progres checklist, pembatalan/buka ulang).
+ * Sejak Sprint Backend 4B log Persiapan ada di PostgreSQL (riwayat_aktivitas); fungsi di bawah hanya MEMBACA log untuk
+ * memberi keterangan pada baris aksi "Persiapan" (konfirmasi selesai, progres checklist, pembatalan/buka ulang).
  * Hanya fakta yang tercatat di log yang dipakai: tidak ada baris turunan, tidak ada timestamp selesai yang dikarang.
  */
 
@@ -154,91 +154,53 @@ function kode_proyek_objek(string $objek): string
     return preg_match('/^(PRJ-\d{3,})(?: · |$)/u', $objek, $m) ? $m[1] : '';
 }
 
-function konteks_log_proyek(array $log): array
+// Peta pendukung: perubahan deadline per kode proyek (PostgreSQL, urut id = urutan kejadian) dan proyek per kode.
+// Proyek tidak bisa dihapus (HAPUS_PROYEK_TERSEDIA = false), jadi kode proyek tidak pernah dipakai ulang.
+function konteks_log_proyek(): array
 {
-    // Peta pendukung dari log: penghapusan proyek (kode bisa dipakai ulang proyek baru) dan perubahan deadline (lama → baru).
-    $hapus = [];
     $deadline = [];
-    foreach ($log as $r) {
-        if ($r['aksi'] !== 'Proyek') {
-            continue;
-        }
-        $kode = kode_proyek_objek($r['objek']);
-        if ($kode === '') {
-            continue;
-        }
-        if ($r['keterangan'] === 'Proyek dihapus') {
-            $hapus[$kode] = max($hapus[$kode] ?? 0, (int) $r['id']);
-        } elseif ($r['keterangan'] === 'Deadline persiapan diubah') {
-            $deadline[$kode][] = $r;
-        }
-    }
-    // Sejak Sprint Backend 3A perubahan deadline dicatat di PostgreSQL (urut id = urutan kejadian).
-    $deadline_db = [];
-    foreach (sql_semua("SELECT objek, lama FROM riwayat_aktivitas
+    foreach (sql_semua("SELECT id, objek, lama FROM riwayat_aktivitas
                         WHERE aksi = 'Proyek' AND keterangan = 'Deadline persiapan diubah' ORDER BY id") as $r) {
-        $deadline_db[kode_proyek_objek($r['objek'])][] = $r;
+        $deadline[kode_proyek_objek($r['objek'])][] = ['id' => (int) $r['id'], 'lama' => $r['lama']];
     }
     $per_kode = [];
     foreach (semua_proyek() as $p) {
         $per_kode[$p['kode']] = $p;
     }
-    return ['hapus' => $hapus, 'deadline' => $deadline, 'deadline_db' => $deadline_db, 'per_kode' => $per_kode];
+    return ['deadline' => $deadline, 'per_kode' => $per_kode];
 }
 
-function proyek_entri_log(array $konteks, string $kode, int $id_entri): ?array
+// Deadline yang berlaku saat konfirmasi persiapan ($id_log = id log konfirmasi di riwayat_aktivitas).
+// Sejak Sprint Backend 4B log konfirmasi dan log perubahan deadline sama-sama di PostgreSQL. id identity selalu naik, jadi
+// urutan kejadian = urutan id, tidak bergantung pada jam aplikasi (tanggal demo HARI_INI):
+//  - ada perubahan deadline SETELAH konfirmasi: deadline saat konfirmasi = nilai 'lama' perubahan pertama itu;
+//  - tidak ada: deadline proyek saat ini.
+function deadline_saat_konfirmasi(array $konteks, array $proyek, int $id_log): array
 {
-    // Entri log merujuk proyek dengan kode itu, kecuali proyek tersebut dihapus SETELAH entri dibuat (kodenya lalu dipakai ulang).
-    if ($kode === '' || ($konteks['hapus'][$kode] ?? 0) > $id_entri) {
-        return null;
-    }
-    return $konteks['per_kode'][$kode] ?? null;
-}
-
-// Deadline yang berlaku saat konfirmasi persiapan ($entri = baris log konfirmasi di session).
-//  1. Konfirmasi baru menyimpan snapshot 'deadline' saat dicatat. Snapshot dipakai langsung, sehingga log session dan
-//     log PostgreSQL tidak perlu dibandingkan menurut waktu (jam aplikasi memakai tanggal demo HARI_INI).
-//  2. Konfirmasi lama (tanpa snapshot): nilai 'lama' dari perubahan deadline pertama SETELAH konfirmasi. Log session
-//     dibandingkan per id; log PostgreSQL seluruhnya dibuat setelah migrasi 3A, jadi pasti sesudah konfirmasi lama.
-//  3. Tidak ada perubahan sesudahnya: deadline proyek saat ini.
-function deadline_saat_konfirmasi(array $konteks, array $proyek, array $entri): array
-{
-    $sekarang = (string) $proyek['deadline_persiapan'];
-    $snapshot = waktu_valid((string) ($entri['deadline'] ?? ''));
-    if ($snapshot) {
-        return ['deadline' => $snapshot, 'berubah' => $snapshot !== waktu_valid($sekarang)];
-    }
     foreach ($konteks['deadline'][$proyek['kode']] ?? [] as $r) {
-        if ((int) $r['id'] > (int) $entri['id'] && waktu_valid((string) $r['lama'])) {
+        if ($r['id'] > $id_log && waktu_valid((string) $r['lama'])) {
             return ['deadline' => waktu_valid((string) $r['lama']), 'berubah' => true];
         }
     }
-    foreach ($konteks['deadline_db'][$proyek['kode']] ?? [] as $r) {
-        if (waktu_valid((string) $r['lama'])) {
-            return ['deadline' => waktu_valid((string) $r['lama']), 'berubah' => true];
-        }
-    }
-    return ['deadline' => $sekarang, 'berubah' => false];
+    return ['deadline' => (string) $proyek['deadline_persiapan'], 'berubah' => false];
 }
 
 function info_persiapan_riwayat(): array
 {
-    // Keterangan tambahan per id entri log Persiapan:
+    // Keterangan tambahan per id entri log Persiapan (id negatif, sama dengan daftar_riwayat()):
     //  - 'konfirmasi': deadline saat itu, waktu konfirmasi, Tepat Waktu/Terlambat (+selisih), dan pembatalan sesudahnya bila ada;
     //  - 'batal'     : konfirmasi tidak berlaku lagi (otomatis) atau dibuka ulang (manual);
     //  - 'progres'   : simpan checklist "x dari y barang diperiksa", BUKAN persiapan selesai (tanpa status akhir).
-    $log = array_values(db('riwayat'));
-    usort($log, fn ($a, $b) => (int) $a['id'] <=> (int) $b['id']);
-    $konteks = konteks_log_proyek($log);
+    $log = sql_semua("SELECT id, TO_CHAR(waktu, 'YYYY-MM-DD HH24:MI') AS waktu, objek, keterangan, lama, baru
+                      FROM riwayat_aktivitas WHERE aksi = 'Persiapan' ORDER BY id");
+    $konteks = konteks_log_proyek();
     $info = [];
     $konfirmasi_terbuka = [];
     foreach ($log as $r) {
-        if ($r['aksi'] !== 'Persiapan') {
-            continue;
-        }
-        $id = (int) $r['id'];
+        $id_db = (int) $r['id'];
+        $id = -$id_db;
         $kode = kode_proyek_objek($r['objek']);
-        $proyek = proyek_entri_log($konteks, $kode, $id);
+        $proyek = $konteks['per_kode'][$kode] ?? null;
         $kunci = $proyek ? 'p' . $proyek['id'] : 'k' . $kode;
         $dasar = ['proyek' => $proyek, 'kode' => $kode];
         if ($r['baru'] === 'Dikonfirmasi Selesai') {
@@ -246,7 +208,7 @@ function info_persiapan_riwayat(): array
             $deadline = '';
             $berubah = false;
             if ($proyek) {
-                $dl = deadline_saat_konfirmasi($konteks, $proyek, $r);
+                $dl = deadline_saat_konfirmasi($konteks, $proyek, $id_db);
                 $deadline = $dl['deadline'];
                 $berubah = $dl['berubah'];
                 $hasil = ketepatan_persiapan($r['waktu'], $deadline);
