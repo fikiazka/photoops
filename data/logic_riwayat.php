@@ -15,7 +15,8 @@ function catat_riwayat(string $aksi, string $objek, string $keterangan, string $
     ] + $ekstra);
 }
 
-// Audit Proyek dan Tim (Sprint Backend 3A) di PostgreSQL, dipanggil di dalam transaksi yang sama dengan perubahannya.
+// Audit Proyek dan Tim (Sprint Backend 3A), juga Kebutuhan, Alokasi, dan Rental (3C), di PostgreSQL; dipanggil di dalam
+// transaksi yang sama dengan perubahannya.
 // Waktunya memakai sekarang() (jam aplikasi), sama dengan log Persiapan/Serah Terima di session, karena log ini
 // ditampilkan berdampingan dan dibaca bersama di halaman Riwayat.
 function catat_riwayat_proyek(string $aksi, string $objek, string $keterangan, string $lama = '', string $baru = ''): void
@@ -69,7 +70,7 @@ function catat_riwayat_preset(string $objek, string $keterangan, string $lama = 
 }
 
 // Aksi riwayat yang sumbernya PostgreSQL. Aksi lain masih dari log session.
-const AKSI_RIWAYAT_DB = ['Pengguna', 'Perlengkapan', 'Proyek', 'Tim', 'Preset'];
+const AKSI_RIWAYAT_DB = ['Pengguna', 'Perlengkapan', 'Proyek', 'Tim', 'Preset', 'Kebutuhan', 'Alokasi', 'Rental'];
 
 // Halaman Riwayat: log session (selain AKSI_RIWAYAT_DB) digabung dengan audit dari PostgreSQL.
 // Tabel riwayat_aktivitas juga berisi data contoh aksi lain (Alokasi, Insiden, ...) yang sama dengan log session;

@@ -172,7 +172,7 @@ function seed_data(): array
                 [3, 3, [13, 14, 16, 17], '2026-11-06 19:40', 2],
                 [4, 4, [21, 22], '2026-11-06 10:15', 2],
                 [5, 5, [], null, null],
-                [6, 7, [25, 26, 27], '2026-11-05 19:20', 2],
+                [6, 7, [25, 26, 27, 41], '2026-11-05 19:20', 2],
                 [7, 8, [28, 29, 30], '2026-10-04 17:00', 2],
                 [8, 9, [31, 32, 33, 34, 35], '2026-10-09 19:00', 2],
                 [9, 10, [36, 37, 38], '2026-10-16 18:45', 2],
@@ -194,7 +194,14 @@ function seed_data(): array
                 [10, 'TRX-036', 10, 'Keluar', '2026-10-17 13:00', 2, 'Sari Dewi', ''],
                 [11, 'TRX-037', 10, 'Kembali', '2026-10-17 22:30', 2, 'Sari Dewi', ''],
             ]
-        ),
+        ) + [
+            // Sama dengan seed PostgreSQL: alokasi Milik Kru #41 (PRJ-025) keluar 2 unit, baru 1 yang kembali.
+            12 => ['id' => 12, 'kode' => 'TRX-044', 'proyek_id' => 7, 'jenis' => 'Keluar', 'waktu' => '2026-11-06 07:00', 'petugas_id' => 2,
+                'penerima' => 'Dimas Arya', 'penerima_id' => 6, 'catatan' => '', 'dicatat_pada' => '2026-11-06 07:00'],
+            13 => ['id' => 13, 'kode' => 'TRX-045', 'proyek_id' => 7, 'jenis' => 'Kembali', 'waktu' => '2026-11-06 21:00', 'petugas_id' => 2,
+                'penerima' => 'Budi Santoso', 'penyerah' => 'Dimas Arya', 'penyerah_id' => 6, 'catatan' => 'Satu SD Card masih dipakai di sesi kedua',
+                'dicatat_pada' => '2026-11-06 21:00'],
+        ],
 
         'detail_transaksi' => seed_tabel(
             ['id', 'transaksi_id', 'alokasi_id', 'kondisi'],
@@ -211,7 +218,10 @@ function seed_data(): array
                 [37, 10, 36, 'Baik'], [38, 10, 37, 'Baik'], [39, 10, 38, 'Baik'],
                 [40, 11, 36, 'Baik'], [41, 11, 37, 'Baik'], [42, 11, 38, 'Baik'],
             ]
-        ),
+        ) + [
+            43 => ['id' => 43, 'transaksi_id' => 12, 'alokasi_id' => 41, 'kondisi' => 'Baik', 'jumlah' => 2],
+            44 => ['id' => 44, 'transaksi_id' => 13, 'alokasi_id' => 41, 'kondisi' => 'Baik', 'jumlah' => 1],
+        ],
 
         'insiden' => seed_tabel(
             ['id', 'kode', 'perlengkapan_id', 'proyek_id', 'jenis', 'waktu', 'deskripsi', 'status', 'pelapor_id'],
@@ -244,6 +254,8 @@ function seed_data(): array
                 [17, '2026-11-06 10:15', 2, 'Persiapan', 'PRJ-022', '2 dari 5 barang diperiksa', '', ''],
                 [18, '2026-11-06 16:20', 1, 'Proyek', 'PRJ-023 · Company Profile PT Sinar', 'Proyek baru dibuat', '', ''],
                 [19, '2026-11-06 19:40', 2, 'Persiapan', 'PRJ-021', '4 dari 6 barang diperiksa', '', ''],
+                [20, '2026-11-06 07:00', 2, 'Barang Keluar', 'PRJ-025 · TRX-044', '2 unit diserahkan ke Dimas Arya (Milik Kru 2)', '', ''],
+                [21, '2026-11-06 21:00', 2, 'Pengembalian', 'PRJ-025 · TRX-045', '1 dari 2 unit kembali dari PRJ-025 (Milik Kru 1)', '', ''],
             ]
         ),
     ];

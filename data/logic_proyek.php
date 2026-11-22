@@ -19,8 +19,8 @@ function proyek_aktif(array $proyek): bool
 // ---------------------------------------------------------------------------------------------
 // Proyek dan anggota proyek di PostgreSQL (tabel proyek, anggota_proyek, persiapan_proyek).
 //   - PIC disimpan di proyek.pic_id; anggota_proyek hanya berisi kru (PIC tidak dicatat di sana).
-//   - Modul yang masih memakai PHP Session (kebutuhan, alokasi, persiapan, serah terima, insiden) tetap menyimpan
-//     proyek_id dan membaca proyek lewat semua_proyek() / cari_proyek(), seperti unit Studio di Sprint Backend 2.
+//   - Modul yang masih memakai PHP Session (persiapan, serah terima, insiden) tetap menyimpan proyek_id dan membaca
+//     proyek lewat semua_proyek() / cari_proyek(). Kebutuhan dan alokasi di PostgreSQL sejak Sprint 3C (data/logic_alokasi.php).
 //   - Waktu dibaca dengan TO_CHAR berformat 'YYYY-MM-DD HH24:MI' agar sama dengan format data session
 //     (dipakai tgl(), waktu_input(), substr(..., 0, 10), dan perbandingan dengan sekarang()).
 // ---------------------------------------------------------------------------------------------
@@ -283,7 +283,9 @@ function tambah_kru(int $proyek_id, int $pengguna_id): string
 }
 
 // Lepas kru (baris anggota_proyek). PIC tidak ada di tabel ini, jadi tidak bisa dilepas lewat fungsi ini.
-// Hasil: ok | tidak_ada | proyek_tutup.
+// Kru yang masih tercatat membawa barang Milik Kru (alokasi selain Dibatalkan) di proyek ini tidak bisa dilepas; sejak
+// Sprint Backend 3C alokasi ada di PostgreSQL, jadi pemeriksaan ini berlaku untuk semua browser.
+// Hasil: ok | tidak_ada | proyek_tutup | bawa_barang.
 function lepas_kru(int $proyek_id, int $anggota_id): string
 {
     $hasil = sql_transaksi(function () use ($proyek_id, $anggota_id) {
@@ -293,6 +295,15 @@ function lepas_kru(int $proyek_id, int $anggota_id): string
         }
         if (!proyek_aktif($proyek)) {
             return 'proyek_tutup';
+        }
+        $kru = sql_satu('SELECT pengguna_id FROM anggota_proyek WHERE id = :id AND proyek_id = :proyek_id', ['id' => $anggota_id, 'proyek_id' => $proyek_id]);
+        if (!$kru) {
+            return 'tidak_ada';
+        }
+        if (sql_satu("SELECT 1 FROM alokasi_barang a JOIN kebutuhan_proyek k ON k.id = a.kebutuhan_id
+                      WHERE k.proyek_id = :proyek_id AND a.sumber = 'Milik Kru' AND a.pemilik_id = :pengguna_id AND a.status <> 'Dibatalkan' LIMIT 1",
+            ['proyek_id' => $proyek_id, 'pengguna_id' => $kru['pengguna_id']])) {
+            return 'bawa_barang';
         }
         $hapus = sql_satu('DELETE FROM anggota_proyek WHERE id = :id AND proyek_id = :proyek_id RETURNING pengguna_id',
             ['id' => $anggota_id, 'proyek_id' => $proyek_id]);
@@ -310,7 +321,7 @@ function lepas_kru(int $proyek_id, int $anggota_id): string
 
 function kebutuhan_proyek(int $proyek_id): array
 {
-    $hasil = array_values(array_filter(db('kebutuhan'), fn ($k) => (int) $k['proyek_id'] === $proyek_id));
+    $hasil = array_values(array_filter(semua_kebutuhan(), fn ($k) => $k['proyek_id'] === $proyek_id));
     usort($hasil, fn ($a, $b) => $a['kategori_id'] <=> $b['kategori_id'] ?: $a['id'] <=> $b['id']);
     return $hasil;
 }
@@ -332,7 +343,7 @@ function validasi_kebutuhan(array $data, ?array $lama): array
     } elseif ($panjang_nama > 60) {
         $galat['nama'] = 'Nama kebutuhan maksimal 60 karakter.';
     }
-    if (!cari_kategori((int) $data['kategori_id'])) {
+    if (!preg_match('/^\d{1,9}$/', $data['kategori_id']) || !cari_kategori((int) $data['kategori_id'])) {
         $galat['kategori_id'] = 'Pilih kategori.';
     } elseif ($lama && (int) $data['kategori_id'] !== (int) $lama['kategori_id']) {
         $aktif = count(array_filter(alokasi_kebutuhan($lama['id']), fn ($a) => $a['status'] !== 'Dibatalkan'));
@@ -366,8 +377,8 @@ function kebutuhan_punya_serah(int $kebutuhan_id): bool
 function alokasi_proyek(int $proyek_id, bool $aktif_saja = false): array
 {
     $hasil = [];
-    foreach (db('alokasi') as $alokasi) {
-        if ((int) $alokasi['proyek_id'] === $proyek_id && (!$aktif_saja || $alokasi['status'] !== 'Dibatalkan')) {
+    foreach (semua_alokasi() as $alokasi) {
+        if ($alokasi['proyek_id'] === $proyek_id && (!$aktif_saja || $alokasi['status'] !== 'Dibatalkan')) {
             $hasil[] = $alokasi;
         }
     }
@@ -376,7 +387,7 @@ function alokasi_proyek(int $proyek_id, bool $aktif_saja = false): array
 
 function alokasi_kebutuhan(int $kebutuhan_id): array
 {
-    return array_values(array_filter(db('alokasi'), fn ($a) => (int) $a['kebutuhan_id'] === $kebutuhan_id));
+    return array_values(array_filter(semua_alokasi(), fn ($a) => $a['kebutuhan_id'] === $kebutuhan_id));
 }
 
 function jumlah_alokasi(array $alokasi): int

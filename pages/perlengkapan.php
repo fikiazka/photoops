@@ -126,7 +126,7 @@ if (is_post()) {
     $modal_rental = ['terima_rental' => 'dialog-terima-rental', 'atur_jatuh_tempo' => 'dialog-atur-tempo', 'perpanjang_rental' => 'dialog-perpanjang-rental', 'kembalikan_vendor' => 'dialog-kembali-vendor'];
     if (isset($modal_rental[$aksi])) {
         wajib_boleh('rental.kelola');
-        $a = db_cari('alokasi', (int) input('id'));
+        $a = cari_alokasi((int) input('id'));
         $pr = $a ? cari_proyek((int) $a['proyek_id']) : null;
         if (!$a || !$pr || input('proyek_id') !== (string) $a['proyek_id']) {
             flash('error', 'Alokasi rental tidak ditemukan pada proyek tersebut.');

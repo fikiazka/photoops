@@ -11,7 +11,7 @@ $berikut = $akan_datang[0] ?? null;
 $lalu = array_values(array_filter($proyek_saya, fn ($p) => !in_array($p, $akan_datang, true)));
 
 $bawaan = [];
-foreach (db('alokasi') as $a) {
+foreach (semua_alokasi() as $a) {
     if ($a['sumber'] === 'Milik Kru' && (int) $a['pemilik_id'] === (int) $pengguna['id'] && $a['status'] !== 'Dibatalkan') {
         $p = cari_proyek($a['proyek_id']);
         if ($p && proyek_aktif($p)) {

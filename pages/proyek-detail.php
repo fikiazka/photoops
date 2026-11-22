@@ -54,9 +54,9 @@ if (is_post()) {
             flash('error', 'Anggota tidak ditemukan di tim proyek ini. PIC diganti lewat Ubah proyek.');
             muat_ulang();
         }
-        // Alokasi Milik Kru masih di PHP Session: pemeriksaan ini hanya melihat data di browser ini.
+        // Alokasi Milik Kru ada di PostgreSQL (Sprint 3C); lepas_kru() memeriksanya ulang di dalam transaksi.
         foreach (alokasi_proyek($pid, true) as $a) {
-            if ($a['sumber'] === 'Milik Kru' && (int) $a['pemilik_id'] === $baris['pengguna_id']) {
+            if ($a['sumber'] === 'Milik Kru' && $a['pemilik_id'] === $baris['pengguna_id']) {
                 flash('error', nama_pengguna($baris['pengguna_id']) . ' masih tercatat membawa ' . $a['nama_barang'] . '. Hapus atau batalkan alokasinya dulu.');
                 muat_ulang();
             }
@@ -64,6 +64,8 @@ if (is_post()) {
         $hasil = lepas_kru($pid, $baris['id']);
         if ($hasil === 'ok') {
             flash('sukses', nama_pengguna($baris['pengguna_id']) . ' dilepas dari tim.');
+        } elseif ($hasil === 'bawa_barang') {
+            flash('error', nama_pengguna($baris['pengguna_id']) . ' masih tercatat membawa barang Milik Kru di proyek ini. Hapus atau batalkan alokasinya dulu.');
         } elseif ($hasil === 'proyek_tutup') {
             flash('error', 'Proyek ' . $proyek['kode'] . ' sudah ditutup. Tim tidak bisa diubah lagi.');
         } else {
@@ -76,11 +78,11 @@ if (is_post()) {
         wajib_boleh('kebutuhan.kelola');
         wajib_proyek_aktif($proyek);
         wajib_persiapan_terbuka($proyek);
-        $id = (int) input('id');
+        $id = preg_match('/^\d{1,9}$/', input('id')) ? (int) input('id') : 0;
         $lama_k = null;
         if ($id) {
-            $lama_k = db_cari('kebutuhan', $id);
-            if (!$lama_k || (int) $lama_k['proyek_id'] !== $pid) {
+            $lama_k = cari_kebutuhan($id);
+            if (!$lama_k || $lama_k['proyek_id'] !== $pid) {
                 flash('error', 'Kebutuhan tidak ditemukan di proyek ini.');
                 muat_ulang();
             }
@@ -91,16 +93,19 @@ if (is_post()) {
             simpan_form('dialog-kebutuhan', $data, $galat);
             muat_ulang();
         }
-        $jumlah = (int) $data['jumlah'];
-        $isi = ['nama' => $data['nama'], 'kategori_id' => (int) $data['kategori_id'], 'jumlah' => $jumlah, 'acuan' => $data['acuan']];
-        if ($lama_k) {
-            db_ubah('kebutuhan', $id, $isi);
-            catat_riwayat('Kebutuhan', $proyek['kode'], $isi['nama'] . ' diperbarui', (string) $lama_k['jumlah'], (string) $jumlah);
-            flash('sukses', 'Kebutuhan ' . $isi['nama'] . ' diperbarui.');
+        $isi = ['nama' => $data['nama'], 'acuan' => $data['acuan'], 'kategori_id' => (int) $data['kategori_id'], 'jumlah' => (int) $data['jumlah']];
+        // Disimpan di PostgreSQL; aturan alokasi aktif dicek ulang di dalam kunci proyek (bisa berubah dari browser lain).
+        $hasil = simpan_kebutuhan($pid, $id, $isi);
+        if ($hasil['status'] === 'kategori_terkunci') {
+            simpan_form('dialog-kebutuhan', $data, ['kategori_id' => 'Kategori tidak bisa diubah karena kebutuhan ini sudah punya alokasi aktif atau riwayat serah terima. Batalkan atau hapus alokasi terkait terlebih dahulu.']);
+        } elseif ($hasil['status'] === 'kurang_dari_terisi') {
+            simpan_form('dialog-kebutuhan', $data, ['jumlah' => 'Tidak bisa kurang dari ' . $hasil['terisi'] . ' unit yang sudah ada di alokasi aktif. Batalkan atau hapus alokasinya dulu.']);
+        } elseif ($hasil['status'] === 'tidak_ada') {
+            flash('error', 'Kebutuhan tidak ditemukan di proyek ini. Mungkin sudah dihapus pengguna lain.');
+        } elseif ($hasil['status'] === 'proyek_tutup') {
+            flash('error', 'Proyek ' . $proyek['kode'] . ' sudah ditutup. Kebutuhan dan alokasinya tidak bisa diubah lagi.');
         } else {
-            db_tambah('kebutuhan', ['proyek_id' => $pid] + $isi);
-            catat_riwayat('Kebutuhan', $proyek['kode'], $isi['nama'] . ' × ' . $jumlah . ' ditambahkan');
-            flash('sukses', 'Kebutuhan ' . $isi['nama'] . ' ditambahkan.');
+            flash('sukses', 'Kebutuhan ' . $isi['nama'] . ($lama_k ? ' diperbarui.' : ' ditambahkan.'));
         }
         muat_ulang();
     }
@@ -109,8 +114,8 @@ if (is_post()) {
         wajib_boleh('kebutuhan.kelola');
         wajib_proyek_aktif($proyek);
         wajib_persiapan_terbuka($proyek);
-        $k = db_cari('kebutuhan', (int) input('id'));
-        if (!$k || (int) $k['proyek_id'] !== $pid) {
+        $k = cari_kebutuhan(input('id'));
+        if (!$k || $k['proyek_id'] !== $pid) {
             flash('error', 'Kebutuhan tidak ditemukan di proyek ini.');
             muat_ulang();
         }
@@ -118,19 +123,24 @@ if (is_post()) {
             flash('error', 'Kebutuhan ' . $k['nama'] . ' masih punya alokasi aktif. Batalkan atau hapus alokasinya dulu.');
             muat_ulang();
         }
+        // Serah terima baru masih di session browser ini; data serah terima di PostgreSQL dicek di hapus_kebutuhan().
         if (kebutuhan_punya_serah($k['id'])) {
             flash('error', 'Kebutuhan ' . $k['nama'] . ' punya riwayat serah terima, jadi tidak bisa dihapus.');
             muat_ulang();
         }
-        $id_terhapus = [];
-        foreach (alokasi_kebutuhan($k['id']) as $a) {
-            db_hapus('alokasi', $a['id']);
-            $id_terhapus[] = (int) $a['id'];
+        $hasil = hapus_kebutuhan($pid, $k['id']);
+        if ($hasil['status'] === 'ok') {
+            lepas_dari_checklist($pid, $hasil['alokasi_ids']);
+            flash('sukses', 'Kebutuhan ' . $k['nama'] . ' dihapus.');
+        } elseif ($hasil['status'] === 'masih_alokasi') {
+            flash('error', 'Kebutuhan ' . $k['nama'] . ' masih punya alokasi aktif. Batalkan atau hapus alokasinya dulu.');
+        } elseif ($hasil['status'] === 'punya_serah') {
+            flash('error', 'Kebutuhan ' . $k['nama'] . ' punya riwayat serah terima, jadi tidak bisa dihapus.');
+        } elseif ($hasil['status'] === 'proyek_tutup') {
+            flash('error', 'Proyek ' . $proyek['kode'] . ' sudah ditutup. Kebutuhan dan alokasinya tidak bisa diubah lagi.');
+        } else {
+            flash('error', 'Kebutuhan ' . $k['nama'] . ' sudah tidak ada. Mungkin sudah dihapus pengguna lain.');
         }
-        lepas_dari_checklist($pid, $id_terhapus);
-        db_hapus('kebutuhan', $k['id']);
-        catat_riwayat('Kebutuhan', $proyek['kode'], $k['nama'] . ' dihapus');
-        flash('sukses', 'Kebutuhan ' . $k['nama'] . ' dihapus.');
         muat_ulang();
     }
 
@@ -138,28 +148,16 @@ if (is_post()) {
         wajib_boleh('kebutuhan.kelola');
         wajib_proyek_aktif($proyek);
         wajib_persiapan_terbuka($proyek);
-        // Preset dibaca dari PostgreSQL; itemnya DISALIN menjadi kebutuhan proyek (kebutuhan masih di session).
+        // Item preset DISALIN menjadi kebutuhan proyek dalam satu transaksi PostgreSQL (preset dan kebutuhan tidak saling merujuk).
         $preset = cari_preset(input('preset_id'));
-        if (!$preset) {
+        $hasil = $preset ? isi_kebutuhan_dari_preset($pid, $preset['id']) : ['status' => 'preset_tidak_ada'];
+        if ($hasil['status'] === 'preset_tidak_ada') {
             simpan_form('dialog-isi-preset', [], ['preset_id' => 'Pilih preset.']);
-            muat_ulang();
+        } elseif ($hasil['status'] === 'proyek_tutup') {
+            flash('error', 'Proyek ' . $proyek['kode'] . ' sudah ditutup. Kebutuhan dan alokasinya tidak bisa diubah lagi.');
+        } else {
+            flash('sukses', $hasil['tambah'] . ' kebutuhan dari preset ' . $hasil['preset'] . ' ditambahkan' . ($hasil['lewat'] ? ', ' . $hasil['lewat'] . ' dilewati karena sudah ada.' : '.'));
         }
-        $sudah = array_map(fn ($k) => mb_strtolower($k['acuan'] !== '' ? $k['acuan'] : $k['nama']), kebutuhan_proyek($pid));
-        $tambah = 0;
-        $lewat = 0;
-        foreach (semua_item_preset() as $d) {
-            if ($d['preset_id'] !== $preset['id']) {
-                continue;
-            }
-            if (in_array(mb_strtolower($d['nama_perlengkapan']), $sudah, true)) {
-                $lewat++;
-                continue;
-            }
-            db_tambah('kebutuhan', ['proyek_id' => $pid, 'nama' => $d['nama_perlengkapan'], 'acuan' => $d['nama_perlengkapan'], 'kategori_id' => $d['kategori_id'], 'jumlah' => $d['jumlah']]);
-            $tambah++;
-        }
-        catat_riwayat('Kebutuhan', $proyek['kode'], $tambah . ' kebutuhan ditambahkan dari preset ' . $preset['nama']);
-        flash('sukses', $tambah . ' kebutuhan dari preset ' . $preset['nama'] . ' ditambahkan' . ($lewat ? ', ' . $lewat . ' dilewati karena sudah ada.' : '.'));
         muat_ulang();
     }
 
@@ -167,8 +165,8 @@ if (is_post()) {
         wajib_boleh('alokasi.kelola');
         wajib_proyek_aktif($proyek);
         wajib_persiapan_terbuka($proyek);
-        $k = db_cari('kebutuhan', (int) input('kebutuhan_id'));
-        if (!$k || (int) $k['proyek_id'] !== $pid) {
+        $k = cari_kebutuhan(input('kebutuhan_id'));
+        if (!$k || $k['proyek_id'] !== $pid) {
             flash('error', 'Kebutuhan tidak ditemukan di proyek ini.');
             muat_ulang();
         }
@@ -202,7 +200,7 @@ if (is_post()) {
         if (!in_array($data['sumber'], daftar_sumber(), true)) {
             $galat['sumber'] = 'Pilih sumber barang.';
         } elseif ($data['sumber'] === 'Studio') {
-            $unit = cari_perlengkapan((int) $data['perlengkapan_id']);
+            $unit = preg_match('/^\d{1,9}$/', $data['perlengkapan_id']) ? cari_perlengkapan((int) $data['perlengkapan_id']) : null;
             if (!$unit) {
                 $galat['perlengkapan_id'] = 'Pilih unit.';
             } elseif ((int) $unit['kategori_id'] !== (int) $k['kategori_id']) {
@@ -216,39 +214,57 @@ if (is_post()) {
         } else {
             if ($data['nama_barang'] === '') {
                 $galat['nama_barang'] = 'Nama barang wajib diisi.';
+            } elseif (mb_strlen($data['nama_barang']) > 60) {
+                $galat['nama_barang'] = 'Nama barang maksimal 60 karakter.';
             }
             if ($data['sumber'] === 'Rental' && $data['vendor'] === '') {
                 $galat['vendor'] = 'Nama vendor wajib diisi.';
+            } elseif ($data['sumber'] === 'Rental' && mb_strlen($data['vendor']) > 60) {
+                $galat['vendor'] = 'Nama vendor maksimal 60 karakter.';
             }
-            if ($data['sumber'] === 'Milik Kru' && peran_di_proyek($pid, (int) $data['pemilik_id']) === '') {
+            if ($data['sumber'] === 'Milik Kru' && (!preg_match('/^\d{1,9}$/', $data['pemilik_id']) || peran_di_proyek($pid, (int) $data['pemilik_id']) === '')) {
                 $galat['pemilik_id'] = 'Pilih pemilik dari anggota tim proyek.';
             }
+        }
+        if (mb_strlen($data['catatan']) > 120) {
+            $galat['catatan'] = 'Catatan maksimal 120 karakter.';
         }
         if ($galat) {
             simpan_form($modal, $data, $galat);
             muat_ulang();
         }
-        [$mulai, $selesai] = rentang_alokasi($proyek);
-        $studio = $data['sumber'] === 'Studio';
-        $baru = db_tambah('alokasi', [
-            'proyek_id' => $pid,
-            'kebutuhan_id' => $k['id'],
+        // Disimpan di PostgreSQL. Sisa kebutuhan, kelayakan unit, bentrok jadwal, dan keanggotaan pemilik dicek ulang
+        // di dalam transaksi setelah proyek, kebutuhan, dan unit dikunci (aman bila dua browser mengirim bersamaan).
+        $hasil = tambah_alokasi($pid, $k['id'], [
             'sumber' => $data['sumber'],
-            'perlengkapan_id' => $studio ? (int) $data['perlengkapan_id'] : null,
-            'nama_barang' => $studio ? '' : $data['nama_barang'],
-            'vendor' => $data['sumber'] === 'Rental' ? $data['vendor'] : '',
+            'perlengkapan_id' => $data['sumber'] === 'Studio' ? (int) $data['perlengkapan_id'] : null,
+            'nama_barang' => $data['nama_barang'],
+            'vendor' => $data['vendor'],
             'pemilik_id' => $data['sumber'] === 'Milik Kru' ? (int) $data['pemilik_id'] : null,
             'jumlah' => (int) $data['jumlah'],
-            'tgl_mulai' => $mulai,
-            'tgl_selesai' => $selesai,
             'status' => $data['status'],
             'catatan' => $data['catatan'],
         ]);
-        lepas_dari_checklist($pid, [$baru]);
-        $a = db_cari('alokasi', $baru);
-        $kali =jumlah_alokasi($a) > 1 ? ' × ' . jumlah_alokasi($a) : '';
-        catat_riwayat('Alokasi', ($studio ? keterangan_sumber($a) . ' · ' : nama_barang_alokasi($a) . ' · ') . $proyek['kode'], $data['sumber'] . ': ' . nama_barang_alokasi($a) . $kali . ' untuk ' . $k['nama']);
-        flash('sukses', nama_barang_alokasi($a) . $kali . ' dialokasikan untuk ' . $k['nama'] . '.');
+        $kode_unit = $hasil['kode_unit'] ?? '';
+        $galat_db = [
+            'melebihi' => ['jumlah', ($hasil['sisa'] ?? 0) > 0 ? 'Melebihi sisa kebutuhan. Hanya ' . ($hasil['sisa'] ?? 0) . ' unit lagi yang bisa dialokasikan.' : 'Kebutuhan ini sudah teralokasi penuh.'],
+            'unit_tidak_ada' => ['perlengkapan_id', 'Pilih unit.'],
+            'unit_tidak_layak' => ['perlengkapan_id', $kode_unit . ': ' . ($hasil['alasan'] ?? '') . '.'],
+            'kategori_beda' => ['perlengkapan_id', $kode_unit . ' berkategori lain dari kebutuhan ini. Pilih unit dengan kategori yang sama.'],
+            'sudah_di_proyek' => ['perlengkapan_id', $kode_unit . ': Sudah dipakai di proyek ini.'],
+            'bentrok' => ['perlengkapan_id', $kode_unit . ': Bentrok dengan ' . (cari_proyek($hasil['proyek_id'] ?? 0)['kode'] ?? '?') . ' (' . rentang_tgl($hasil['tgl_mulai'] ?? HARI_INI, $hasil['tgl_selesai'] ?? HARI_INI) . ').'],
+            'pemilik_bukan_anggota' => ['pemilik_id', 'Pilih pemilik dari anggota tim proyek.'],
+        ];
+        if (isset($galat_db[$hasil['status']])) {
+            simpan_form($modal, $data, [$galat_db[$hasil['status']][0] => $galat_db[$hasil['status']][1]]);
+        } elseif ($hasil['status'] === 'kebutuhan_tidak_ada') {
+            flash('error', 'Kebutuhan tidak ditemukan di proyek ini. Mungkin sudah dihapus pengguna lain.');
+        } elseif ($hasil['status'] === 'proyek_tutup') {
+            flash('error', 'Proyek ' . $proyek['kode'] . ' sudah ditutup. Kebutuhan dan alokasinya tidak bisa diubah lagi.');
+        } else {
+            lepas_dari_checklist($pid, [$hasil['id']]);
+            flash('sukses', $hasil['nama'] . ' dialokasikan untuk ' . $hasil['kebutuhan'] . '.');
+        }
         muat_ulang();
     }
 
@@ -256,37 +272,41 @@ if (is_post()) {
         wajib_boleh('alokasi.kelola');
         wajib_proyek_aktif($proyek);
         wajib_persiapan_terbuka($proyek);
-        $a = db_cari('alokasi', (int) input('id'));
-        if (!$a || (int) $a['proyek_id'] !== $pid) {
+        $a = cari_alokasi(input('id'));
+        if (!$a || $a['proyek_id'] !== $pid) {
             flash('error', 'Alokasi tidak ditemukan di proyek ini.');
             muat_ulang();
         }
+        // Serah terima baru masih di PHP Session (browser ini) sehingga dicek di sini; data serah terima di PostgreSQL,
+        // status alokasi, kondisi unit, dan catatan vendor dicek ulang oleh ubah_status_alokasi() di dalam transaksi.
         $serah = serah_alokasi($a['id']);
         $nama = nama_barang_alokasi($a);
-        $unit = $a['sumber'] === 'Studio' ? cari_perlengkapan((int) $a['perlengkapan_id']) : null;
-        if ($serah) {
+        $hasil = $serah ? ['status' => 'serah_sesi'] : ubah_status_alokasi($pid, $a['id'], ['konfirmasi_alokasi' => 'konfirmasi', 'batalkan_alokasi' => 'batalkan', 'hapus_alokasi' => 'hapus'][$aksi]);
+        $lama = $hasil['lama'] ?? $a;
+        $unit = $hasil['unit'] ?? null;
+        if ($hasil['status'] === 'serah_sesi') {
             flash('error', $nama . ' sudah tercatat di serah terima' . (isset($serah['kembali']) ? ' (keluar dan sudah dikembalikan)' : ' dan masih di luar') . '. Alokasinya dikunci agar riwayat transaksi tetap sah.');
-        } elseif ($aksi === 'konfirmasi_alokasi' && $a['status'] !== 'Direncanakan') {
-            flash('error', 'Hanya alokasi berstatus Direncanakan yang bisa dikonfirmasi. ' . $nama . ' berstatus ' . $a['status'] . '.');
-        } elseif ($aksi === 'konfirmasi_alokasi' && $a['sumber'] === 'Studio' && (!$unit || $unit['status_aktif'] !== 'Aktif' || $unit['kondisi'] !== 'Baik')) {
+        } elseif ($hasil['status'] === 'punya_serah') {
+            flash('error', $nama . ' sudah tercatat di serah terima. Alokasinya dikunci agar riwayat transaksi tetap sah.');
+        } elseif ($hasil['status'] === 'bukan_rencana') {
+            flash('error', 'Hanya alokasi berstatus Direncanakan yang bisa dikonfirmasi. ' . $nama . ' berstatus ' . $lama['status'] . '.');
+        } elseif ($hasil['status'] === 'unit_tidak_layak') {
             flash('error', ($unit ? $unit['kode_unit'] . ' sedang ' . ($unit['status_aktif'] !== 'Aktif' ? 'nonaktif' : 'berkondisi ' . $unit['kondisi']) : 'Unit sudah dihapus') . ', jadi alokasinya belum bisa dikonfirmasi.');
-        } elseif ($aksi === 'konfirmasi_alokasi') {
-            db_ubah('alokasi', $a['id'], ['status' => 'Dikonfirmasi']);
-            lepas_dari_checklist($pid, [(int) $a['id']]);
-            catat_riwayat('Alokasi', $nama . ' · ' . $proyek['kode'], 'Alokasi dikonfirmasi', $a['status'], 'Dikonfirmasi');
-            flash('sukses', $nama . ' dikonfirmasi. Centang di Persiapan setelah barang diperiksa.');
-        } elseif ($aksi === 'batalkan_alokasi' && $a['status'] === 'Dibatalkan') {
+        } elseif ($hasil['status'] === 'sudah_batal') {
             flash('error', 'Alokasi ' . $nama . ' sudah dibatalkan sebelumnya.');
-        } elseif (rental_punya_catatan_vendor($a)) {
+        } elseif ($hasil['status'] === 'rental_diterima') {
             flash('error', $nama . ' sudah tercatat diterima dari vendor. Alokasinya dikunci; selesaikan lewat Perlengkapan › Barang eksternal.');
+        } elseif ($hasil['status'] === 'proyek_tutup') {
+            flash('error', 'Proyek ' . $proyek['kode'] . ' sudah ditutup. Kebutuhan dan alokasinya tidak bisa diubah lagi.');
+        } elseif ($hasil['status'] === 'tidak_ada') {
+            flash('error', 'Alokasi tidak ditemukan di proyek ini. Mungkin sudah dihapus pengguna lain.');
+        } elseif ($aksi === 'konfirmasi_alokasi') {
+            lepas_dari_checklist($pid, [(int) $a['id']]);
+            flash('sukses', $nama . ' dikonfirmasi. Centang di Persiapan setelah barang diperiksa.');
         } elseif ($aksi === 'batalkan_alokasi') {
-            db_ubah('alokasi', $a['id'], ['status' => 'Dibatalkan']);
-            catat_riwayat('Alokasi', $nama . ' · ' . $proyek['kode'], 'Alokasi dibatalkan', $a['status'], 'Dibatalkan');
             flash('sukses', 'Alokasi ' . $nama . ' dibatalkan.');
         } else {
-            db_hapus('alokasi', $a['id']);
             lepas_dari_checklist($pid, [(int) $a['id']]);
-            catat_riwayat('Alokasi', $nama . ' · ' . $proyek['kode'], 'Alokasi dihapus');
             flash('sukses', 'Alokasi ' . $nama . ' dihapus.');
         }
         muat_ulang();
@@ -705,7 +725,7 @@ if ($bisa_ubah && $id_dikembalikan) {
 </div>
 <ul class="ceklist">
 <?php foreach ($persiapan['item'] as $a): ?>
-<?php $k = db_cari('kebutuhan', $a['kebutuhan_id']); $tercentang = in_array((int) $a['id'], $persiapan['diperiksa'], true); $menunggu = !alokasi_bisa_diperiksa($a); $tunggu_vendor = $a['status'] === 'Dikonfirmasi' && $menunggu; ?>
+<?php $k = cari_kebutuhan($a['kebutuhan_id']); $tercentang = in_array((int) $a['id'], $persiapan['diperiksa'], true); $menunggu = !alokasi_bisa_diperiksa($a); $tunggu_vendor = $a['status'] === 'Dikonfirmasi' && $menunggu; ?>
 <li>
 <label class="ceklist-item<?= $menunggu ? ' ceklist-mati' : '' ?>">
 <input type="checkbox" name="diperiksa[]" value="<?= (int) $a['id'] ?>"<?= $tercentang ? ' checked' : '' ?><?= $bisa_centang && !$menunggu ? '' : ' disabled' ?>>

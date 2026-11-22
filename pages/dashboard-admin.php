@@ -22,7 +22,7 @@ $ringkas = ringkasan_pemakaian();
 $total_unit = array_sum($ringkas);
 
 $sumber = array_fill_keys(daftar_sumber(), 0);
-foreach (db('alokasi') as $a) {
+foreach (semua_alokasi() as $a) {
     if ($a['status'] !== 'Dibatalkan') {
         $sumber[$a['sumber']] += jumlah_alokasi($a);
     }
