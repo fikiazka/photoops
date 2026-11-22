@@ -2,7 +2,7 @@
 defined('ROOT') || exit;
 
 // Inventaris Studio (kategori dan unit) dibaca dan ditulis di PostgreSQL: tabel kategori_perlengkapan dan perlengkapan.
-// Modul yang masih memakai PHP Session (proyek, alokasi, persiapan, serah terima, insiden) membaca unit lewat
+// Modul yang masih memakai PHP Session (persiapan, insiden) membaca unit lewat
 // semua_perlengkapan() / cari_perlengkapan(), sehingga hanya ada satu sumber data inventaris.
 
 // Semua kategori, ber-key id. Dibaca sekali per request lalu disimpan sementara.
@@ -164,15 +164,15 @@ function indeks_serah(): array
 {
     static $cache = null;
     static $tanda = '';
-    $tanda_baru = count(db('transaksi')) . ':' . count(db('detail_transaksi'));
+    $tanda_baru = count(semua_transaksi()) . ':' . count(semua_detail_transaksi());
     if ($cache !== null && $tanda === $tanda_baru) {
         return $cache;
     }
     // Sprint 3C: satu detail Keluar per alokasi; pengembalian boleh beberapa baris (sebagian / per kondisi).
     // Baris lama tanpa field jumlah dihitung 1 unit. 'kembali' hanya diisi bila seluruh jumlah keluar sudah kembali.
     $cache = [];
-    $transaksi = db('transaksi');
-    foreach (db('detail_transaksi') as $detail) {
+    $transaksi = semua_transaksi();
+    foreach (semua_detail_transaksi() as $detail) {
         $trx = $transaksi[$detail['transaksi_id']] ?? null;
         if (!$trx) {
             continue;
@@ -295,7 +295,7 @@ function cek_unit_untuk_proyek(array $unit, array $proyek): array
         return ['blokir' => 'Kondisi ' . $unit['kondisi'], 'catatan' => ''];
     }
     // Aturan blokir sama dengan bentrok_unit_db() yang dicek ulang di dalam transaksi tambah_alokasi(): semua alokasi unit
-    // ini selain Dibatalkan (PostgreSQL), termasuk yang barangnya sudah kembali, karena status kembali masih per browser.
+    // ini selain Dibatalkan (PostgreSQL), termasuk yang barangnya sudah kembali: jadwal (reservasi) tidak dicampur dengan status fisik.
     [$mulai, $selesai] = rentang_alokasi($proyek);
     foreach (jadwal_unit($unit['id']) as $alokasi) {
         if ($alokasi['proyek_id'] === (int) $proyek['id']) {
@@ -308,7 +308,7 @@ function cek_unit_untuk_proyek(array $unit, array $proyek): array
             return ['blokir' => 'Bentrok dengan ' . ($lain['kode'] ?? '?') . ' (' . rentang_tgl($alokasi['tgl_mulai'], $alokasi['tgl_selesai']) . ')', 'catatan' => ''];
         }
     }
-    // Catatan "masih keluar" hanya informasi dan berasal dari serah terima (PHP Session browser ini).
+    // Catatan "masih keluar" hanya informasi (status fisik dari serah terima PostgreSQL), bukan dasar blokir jadwal.
     $keluar = alokasi_keluar_unit($unit['id']);
     $catatan = $keluar && $keluar['proyek_id'] !== (int) $proyek['id'] ? 'Masih keluar di ' . (cari_proyek($keluar['proyek_id'])['kode'] ?? '?') : '';
     return ['blokir' => '', 'catatan' => $catatan];
@@ -323,7 +323,7 @@ function jadwal_unit(int $unit_id): array
 }
 
 // Stok per nama model: unit Studio aktif (PostgreSQL) dan yang tersedia HARI INI. "Tersedia" = kondisi Baik dan tidak
-// sedang keluar menurut alokasi/serah terima (masih PHP Session, per browser). Ini bukan ketersediaan pada jadwal proyek
+// sedang keluar menurut serah terima PostgreSQL (Sprint 4A). Ini bukan ketersediaan pada jadwal proyek
 // tertentu: bentrok jadwal alokasi diperiksa per unit saat alokasi (cek_unit_untuk_proyek), dipindah ke PostgreSQL di Sprint 3C.
 function stok_model(): array
 {
@@ -587,7 +587,7 @@ function proses_aksi_rental(string $aksi, array $alokasi, array $pengguna): arra
         }
         if (!$terima && $info['dipakai_proyek']) {
             $serah = serah_alokasi((int) $alokasi['id']);
-            $trx = db_cari('transaksi', $serah['trx_keluar'] ?? 0);
+            $trx = cari_transaksi($serah['trx_keluar'] ?? 0);
             return ['umum' => $nama . ' masih tercatat digunakan proyek ' . (cari_proyek((int) $alokasi['proyek_id'])['kode'] ?? '?') . ' (barang keluar ' . ($trx['kode'] ?? '?') . ', ' . tgl($serah['keluar'], 'lengkap') . '): ' . (int) ($serah['sisa'] ?? 0) . ' dari ' . (int) ($serah['jumlah_keluar'] ?? 0) . ' unit belum kembali dari proyek. Catat pengembalian dari proyek terlebih dahulu di Serah Terima; pengembalian ke vendor baru bisa setelah seluruh unit kembali.'];
         }
         if (!$terima && !$info['bisa_kembali']) {
@@ -636,10 +636,11 @@ function proses_aksi_rental(string $aksi, array $alokasi, array $pengguna): arra
         }
         $ok = simpan_catatan_rental((int) $alokasi['id'],
             ['dikembalikan_vendor_pada' => $waktu, 'dikembalikan_vendor_oleh' => $pengguna['id'], 'kondisi_kembali_vendor' => $kondisi, 'catatan_kembali_vendor' => $catatan],
-            "status <> 'Dibatalkan' AND diterima_pada IS NOT NULL AND dikembalikan_vendor_pada IS NULL", [],
+            "status <> 'Dibatalkan' AND diterima_pada IS NOT NULL AND dikembalikan_vendor_pada IS NULL"
+                . ' AND NOT EXISTS (SELECT 1 FROM v_saldo_alokasi v WHERE v.alokasi_id = alokasi_barang.id AND v.sisa > 0)', [],
             [$label, $jumlah . ' unit dikembalikan ke ' . $alokasi['vendor'] . ', kondisi ' . $kondisi . ($catatan !== '' ? ' · ' . $catatan : '')]);
         if (!$ok) {
-            return ['umum' => $nama . ' sudah diubah pengguna lain (misalnya sudah tercatat dikembalikan ke vendor). Muat ulang halaman.'];
+            return ['umum' => $nama . ' sudah diubah pengguna lain (misalnya sudah tercatat dikembalikan ke vendor, atau barangnya baru tercatat keluar ke proyek). Muat ulang halaman.'];
         }
         return ['sukses' => $nama . ': pengembalian ' . $jumlah . ' unit ke vendor dicatat.'];
     }

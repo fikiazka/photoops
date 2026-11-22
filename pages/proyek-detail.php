@@ -123,7 +123,7 @@ if (is_post()) {
             flash('error', 'Kebutuhan ' . $k['nama'] . ' masih punya alokasi aktif. Batalkan atau hapus alokasinya dulu.');
             muat_ulang();
         }
-        // Serah terima baru masih di session browser ini; data serah terima di PostgreSQL dicek di hapus_kebutuhan().
+        // Serah terima ada di PostgreSQL (Sprint 4A); hapus_kebutuhan() memeriksanya ulang di dalam kunci proyek.
         if (kebutuhan_punya_serah($k['id'])) {
             flash('error', 'Kebutuhan ' . $k['nama'] . ' punya riwayat serah terima, jadi tidak bisa dihapus.');
             muat_ulang();
@@ -277,7 +277,7 @@ if (is_post()) {
             flash('error', 'Alokasi tidak ditemukan di proyek ini.');
             muat_ulang();
         }
-        // Serah terima baru masih di PHP Session (browser ini) sehingga dicek di sini; data serah terima di PostgreSQL,
+        // Serah terima ada di PostgreSQL (Sprint 4A). Pemeriksaan di sini hanya untuk pesan yang jelas; serah terima,
         // status alokasi, kondisi unit, dan catatan vendor dicek ulang oleh ubah_status_alokasi() di dalam transaksi.
         $serah = serah_alokasi($a['id']);
         $nama = nama_barang_alokasi($a);
@@ -793,7 +793,7 @@ foreach ($barang_p as $bp) {
 <tr id="serah-<?= (int) $a['id'] ?>">
 <td data-label="Barang"><strong class="teks-pecah"><?= e($a['sumber'] === 'Studio' ? keterangan_sumber($a) : nama_barang_alokasi($a)) ?></strong><div class="kecil redup teks-pecah"><span class="sumber sumber-<?= e(strtolower(str_replace(' ', '-', $a['sumber']))) ?>"><?= e($a['sumber']) ?></span> <?= e($a['sumber'] === 'Studio' ? nama_barang_alokasi($a) : keterangan_sumber($a)) ?></div></td>
 <td data-label="Jumlah" class="angka"><?= (int) ($serah['jumlah_keluar'] ?? jumlah_alokasi($a)) ?> unit</td>
-<td data-label="Keluar"><?php if (isset($serah['keluar'])): ?><?php $trx_s = db_cari('transaksi', $serah['trx_keluar'] ?? 0); ?><?= e(tgl($serah['keluar'], 'singkat_jam')) ?><div class="kecil redup"><?= e(($trx_s['kode'] ?? '?') . (!empty($trx_s['penerima']) ? ' · ' . $trx_s['penerima'] : '')) ?></div><?php else: ?><span class="redup">—</span><?php endif; ?></td>
+<td data-label="Keluar"><?php if (isset($serah['keluar'])): ?><?php $trx_s = cari_transaksi($serah['trx_keluar'] ?? 0); ?><?= e(tgl($serah['keluar'], 'singkat_jam')) ?><div class="kecil redup"><?= e(($trx_s['kode'] ?? '?') . (!empty($trx_s['penerima']) ? ' · ' . $trx_s['penerima'] : '')) ?></div><?php else: ?><span class="redup">—</span><?php endif; ?></td>
 <td data-label="Jadwal selesai"><?= e(tgl($a['tgl_selesai'])) ?></td>
 <td data-label="Kembali dari proyek"><?php if (!empty($serah['jumlah_kembali'])): ?><?= (int) $serah['jumlah_kembali'] ?> dari <?= (int) $serah['jumlah_keluar'] ?> unit · sisa <?= (int) $serah['sisa'] ?><div class="kecil redup"><?= e(teks_kondisi($serah['kondisi_rincian'] ?? []) . ' · terakhir ' . tgl($serah['kembali_terakhir'], 'singkat_jam')) ?></div><?php elseif (isset($serah['keluar'])): ?>0 dari <?= (int) $serah['jumlah_keluar'] ?> unit · sisa <?= (int) $serah['sisa'] ?><?php else: ?><span class="redup">—</span><?php endif; ?></td>
 <td data-label="Status">

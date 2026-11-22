@@ -121,7 +121,15 @@ if (is_post()) {
             simpan_form($modal, ['alokasi' => $lama_pilih, 'penerima_id' => $penerima_id, 'waktu' => input('waktu'), 'catatan' => $catatan], $galat);
             muat_ulang();
         }
-        $hasil = proses_checkout($proyek, $item, $penerima, $waktu, $catatan);
+        // Dicatat di PostgreSQL; status alokasi, saldo, kondisi unit, dan penerima dicek ulang di dalam transaksi berkunci
+        // (alokasi bisa sudah dibatalkan atau dikeluarkan dari browser lain sejak halaman dibuka).
+        $hasil = catat_barang_keluar($proyek, $item, $penerima, $waktu, $catatan);
+        if ($hasil['status'] !== 'ok') {
+            simpan_form($modal, ['alokasi' => $lama_pilih, 'penerima_id' => $penerima_id, 'waktu' => input('waktu'), 'catatan' => $catatan],
+                ['alokasi' => 'Transaksi dibatalkan, tidak ada barang yang dicatat. ' . implode(' ', $hasil['masalah'])]);
+            flash('error', 'Barang keluar untuk ' . $proyek['kode'] . ' tidak dicatat. ' . implode(' ', $hasil['masalah']));
+            muat_ulang();
+        }
         flash('sukses', $hasil['kode'] . ': ' . $hasil['total'] . ' unit keluar untuk ' . $proyek['kode'] . ' (' . teks_per_sumber($hasil['per_sumber']) . '), diterima ' . $penerima['nama'] . ' pada ' . tgl($waktu, 'lengkap') . '.');
         muat_ulang();
     }
@@ -177,7 +185,7 @@ if (is_post()) {
                 }
                 $sisa = $serah['sisa'] ?? 0;
                 if ($sisa < 1) {
-                    $masalah[] = $nama_a . ': seluruh unit sudah tercatat kembali (' . (db_cari('transaksi', (int) ($serah['trx_kembali'] ?? 0))['kode'] ?? '?') . ').';
+                    $masalah[] = $nama_a . ': seluruh unit sudah tercatat kembali (' . (cari_transaksi((int) ($serah['trx_kembali'] ?? 0))['kode'] ?? '?') . ').';
                     continue;
                 }
                 $saldo = $saldo_masuk[$id] ?? null;
@@ -279,15 +287,22 @@ if (is_post()) {
             simpan_form($modal, ['alokasi' => $lama_pilih, 'penyerah_id' => $penyerah_id, 'waktu' => input('waktu'), 'catatan' => $catatan], $galat);
             muat_ulang();
         }
-        // Pengembalian Rusak/Maintenance juga mengubah kondisi unit di PostgreSQL; dijalankan sebagai satu kesatuan.
+        // Transaksi, rincian, kondisi unit Rusak/Maintenance, dan riwayat dicatat di PostgreSQL sebagai satu kesatuan;
+        // saldo dicek ulang di dalam kunci sehingga pengembalian dari dua browser tidak bisa melebihi sisa.
         try {
-            $hasil = proses_session_dan_inventaris(fn () => proses_pengembalian($proyek, $item, $penyerah, $waktu, $catatan));
+            $hasil = catat_pengembalian($proyek, $item, $penyerah, $waktu, $catatan);
         } catch (Throwable $e) {
             if (!galat_db($e)) {
                 throw $e;
             }
             error_log('PhotoOps: pengembalian gagal: ' . $e->getMessage());
             flash('error', 'Pengembalian belum dicatat karena database sedang bermasalah. Tidak ada data yang berubah; coba lagi.');
+            muat_ulang();
+        }
+        if ($hasil['status'] !== 'ok') {
+            simpan_form($modal, ['alokasi' => $lama_pilih, 'penyerah_id' => $penyerah_id, 'waktu' => input('waktu'), 'catatan' => $catatan],
+                ['alokasi' => 'Pengembalian dibatalkan, tidak ada barang yang dicatat. ' . implode(' ', $hasil['masalah'])]);
+            flash('error', 'Pengembalian untuk ' . $proyek['kode'] . ' tidak dicatat. ' . implode(' ', $hasil['masalah']));
             muat_ulang();
         }
         $pesan = $hasil['kode'] . ': ' . $hasil['total'] . ' unit kembali dari ' . $proyek['kode'] . ' (' . teks_per_sumber($hasil['per_sumber']) . '; kondisi ' . teks_kondisi($hasil['per_kondisi']) . ')';
@@ -416,7 +431,7 @@ $ps = hitung_per_sumber($kelompok_serah['unit'], true);
 <ul class="unit-mini">
 <?php foreach ($trx['detail'] as $d): ?>
 <?php $a = cari_alokasi($d['alokasi_id']); ?>
-<li><span><?= e($a ? keterangan_sumber($a) . ' · ' . nama_barang_alokasi($a) : 'Alokasi dihapus') ?><?= jumlah_detail($d) > 1 ? ' × ' . jumlah_detail($d) : '' ?></span><?php if ($a && $a['sumber'] !== 'Studio'): ?> <span class="sumber sumber-<?= e(strtolower(str_replace(' ', '-', $a['sumber']))) ?>"><?= e($a['sumber']) ?></span><?php endif; ?> <?= badge($d['kondisi']) ?><?= !empty($d['trx_asal']) ? ' <span class="redup">asal ' . e(db_cari('transaksi', (int) $d['trx_asal'])['kode'] ?? '?') . '</span>' : '' ?></li>
+<li><span><?= e($a ? keterangan_sumber($a) . ' · ' . nama_barang_alokasi($a) : 'Alokasi dihapus') ?><?= jumlah_detail($d) > 1 ? ' × ' . jumlah_detail($d) : '' ?></span><?php if ($a && $a['sumber'] !== 'Studio'): ?> <span class="sumber sumber-<?= e(strtolower(str_replace(' ', '-', $a['sumber']))) ?>"><?= e($a['sumber']) ?></span><?php endif; ?> <?= badge($d['kondisi']) ?><?= !empty($d['trx_asal']) ? ' <span class="redup">asal ' . e(cari_transaksi((int) $d['trx_asal'])['kode'] ?? '?') . '</span>' : '' ?></li>
 <?php endforeach; ?>
 </ul>
 <?php if ($trx['catatan'] !== ''): ?><p class="kecil redup">Catatan: <?= e($trx['catatan']) ?></p><?php endif; ?>

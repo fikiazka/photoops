@@ -19,7 +19,7 @@ function proyek_aktif(array $proyek): bool
 // ---------------------------------------------------------------------------------------------
 // Proyek dan anggota proyek di PostgreSQL (tabel proyek, anggota_proyek, persiapan_proyek).
 //   - PIC disimpan di proyek.pic_id; anggota_proyek hanya berisi kru (PIC tidak dicatat di sana).
-//   - Modul yang masih memakai PHP Session (persiapan, serah terima, insiden) tetap menyimpan proyek_id dan membaca
+//   - Modul yang masih memakai PHP Session (persiapan, insiden) tetap menyimpan proyek_id dan membaca
 //     proyek lewat semua_proyek() / cari_proyek(). Kebutuhan dan alokasi di PostgreSQL sejak Sprint 3C (data/logic_alokasi.php).
 //   - Waktu dibaca dengan TO_CHAR berformat 'YYYY-MM-DD HH24:MI' agar sama dengan format data session
 //     (dipakai tgl(), waktu_input(), substr(..., 0, 10), dan perbandingan dengan sekarang()).

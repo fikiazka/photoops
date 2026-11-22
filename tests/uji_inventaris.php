@@ -144,23 +144,24 @@ if (($argv[1] ?? '') === '--fungsi') {
     } elseif ($jenis === 'pengembalian_gagal_tanpa' || $jenis === 'pengembalian_gagal_dengan') {
         // Simulasi database gagal DI TENGAH pengembalian: barang pertama (alokasi #25, LGT-002) kembali Rusak,
         // barang kedua (alokasi #26, LGT-003) memakai kondisi 'Hilang' sehingga UPDATE kedua ditolak CHECK constraint.
-        // Session baru di mode ini berisi seed asli, jadi alokasi #25 dan #26 (PRJ-025) masih tercatat keluar.
+        // Alokasi #25 dan #26 (PRJ-025) masih tercatat keluar di data contoh PostgreSQL (TRX-043).
+        // Sejak Sprint 4A serah terima ada di PostgreSQL dan pengembalian selalu lewat catat_pengembalian() (transaksi +
+        // pemulihan session), jadi kedua varian memakai jalur itu.
         $_SESSION['user_id'] = 2;
-        $trx_awal = count(db('transaksi'));
+        $trx_awal = count(semua_transaksi());
         $insiden_awal = count(db('insiden'));
         $proyek = cari_proyek(7);
         $item = [
-            ['alokasi' => db_cari('alokasi', 25), 'per_kondisi' => ['Baik' => 0, 'Maintenance' => 0, 'Rusak' => 1], 'trx_asal' => 5],
-            ['alokasi' => db_cari('alokasi', 26), 'per_kondisi' => ['Baik' => 0, 'Maintenance' => 0, 'Rusak' => 0, 'Hilang' => 1], 'trx_asal' => 5],
+            ['alokasi' => cari_alokasi(25), 'per_kondisi' => ['Baik' => 0, 'Maintenance' => 0, 'Rusak' => 1]],
+            ['alokasi' => cari_alokasi(26), 'per_kondisi' => ['Baik' => 0, 'Maintenance' => 0, 'Rusak' => 0, 'Hilang' => 1]],
         ];
-        $kerja = fn () => proses_pengembalian($proyek, $item, null, '2026-11-07 00:20', 'Simulasi gagal di tengah');
         $galat = '';
         try {
-            $jenis === 'pengembalian_gagal_dengan' ? proses_session_dan_inventaris($kerja) : $kerja();
+            catat_pengembalian($proyek, $item, null, '2026-11-07 00:20', 'Simulasi gagal di tengah');
         } catch (PDOException $e) {
             $galat = $e->getCode();
         }
-        echo json_encode(['galat' => $galat, 'trx_bertambah' => count(db('transaksi')) - $trx_awal,
+        echo json_encode(['galat' => $galat, 'trx_bertambah' => count(semua_transaksi(true)) - $trx_awal,
             'insiden_bertambah' => count(db('insiden')) - $insiden_awal, 'tanda_berubah' => inventaris_berubah()]);
     } elseif ($jenis === 'riwayat') {
         $per_aksi = [];
@@ -509,12 +510,10 @@ function json_akhir(string $keluar): array
     return $pos === false ? [] : (json_decode(substr($keluar, $pos), true) ?: []);
 }
 $kondisi_lgt002 = unit_db('LGT-002')['kondisi'];
-$r = json_akhir(fungsi(['pengembalian_gagal_tanpa']));
-$bug = ($r['galat'] ?? '') !== '' && unit_db('LGT-002')['kondisi'] === 'Rusak' && ($r['trx_bertambah'] ?? 0) === 1;
-cek('E01 (bukti risiko) TANPA pelindung: database gagal di tengah -> unit pertama terlanjur Rusak di PostgreSQL dan transaksi tetap ada di session', $bug, json_encode($r));
-$pdo->prepare('UPDATE perlengkapan SET kondisi = :k WHERE kode_unit = :u')->execute(['k' => $kondisi_lgt002, 'u' => 'LGT-002']); // pulihkan data uji
+// E01 lama ("bukti risiko" tanpa pelindung) tidak dijalankan lagi: sejak Sprint 4A pengembalian tersimpan di PostgreSQL,
+// sehingga varian tanpa transaksi akan menulis transaksi permanen ke data contoh. Jalur aplikasi diuji di E02–E05.
 $r = json_akhir(fungsi(['pengembalian_gagal_dengan']));
-cek('E02 DENGAN proses_session_dan_inventaris(): error database tetap dilaporkan', ($r['galat'] ?? '') === '23514', json_encode($r));
+cek('E02 catat_pengembalian(): error database di tengah pengembalian tetap dilaporkan', ($r['galat'] ?? '') === '23514', json_encode($r));
 cek('E03 kondisi unit pertama di PostgreSQL di-ROLLBACK (tetap ' . $kondisi_lgt002 . ')', unit_db('LGT-002')['kondisi'] === $kondisi_lgt002);
 cek('E04 session dikembalikan: tidak ada transaksi atau insiden setengah jadi', ($r['trx_bertambah'] ?? -1) === 0 && ($r['insiden_bertambah'] ?? -1) === 0);
 cek('E05 tanda inventaris_berubah dihapus sehingga sinkron persiapan tidak berjalan dari data yang dibatalkan', ($r['tanda_berubah'] ?? true) === false);
