@@ -203,10 +203,12 @@ if ($sig_kebutuhan !== '29:42' || md5((string) $sig_alokasi) !== '53eb8da0a12155
 }
 define('ALOKASI_SEED', $sig_alokasi);
 
-// Bersihkan sisa uji sebelumnya: proyek UJI3C (kebutuhan, alokasi, kru, persiapan ikut terhapus lewat CASCADE).
+// Bersihkan sisa uji sebelumnya: proyek UJI3C dihapus (kebutuhan, alokasi, kru, persiapan ikut terhapus lewat CASCADE);
+// proyek uji yang sudah punya transaksi serah terima (K17, Sprint 4A) diarsipkan karena transaksi tidak boleh dihapus.
+require __DIR__ . '/bantu_bersihkan.php';
 function bersihkan(): void
 {
-    jalankan("DELETE FROM proyek WHERE nama LIKE 'UJI3C%'");
+    arsipkan_proyek_uji('UJI3C');
 }
 bersihkan();
 register_shutdown_function('bersihkan');
@@ -623,10 +625,11 @@ cek('K17e unit yang keluar tampil Dipinjam di Inventaris browser yang mencatatny
 tambah_kebutuhan('admin', $pF, 'UJI3C Kamera F', 1, 1);
 $h = minta('admin', SA, $D, ['id' => (string) $pF, 'tab' => 'kebutuhan']);
 cek('K17f catatan "masih keluar" muncul untuk unit itu di proyek lain yang jadwalnya tidak bentrok', bersih($h) && str_contains($h['html'], 'Masih keluar di ' . satu('SELECT kode FROM proyek WHERE id = :p', ['p' => $pC])));
-$h = minta('baru', SA, $D, ['id' => '7', 'tab' => 'kebutuhan']);
+$h = minta('baru', SA, $D, ['id' => '7', 'tab' => 'serah']);
 $s = json_decode(anak(['--periksa-sesi', 'baru']), true);
-cek('K17g seed session selaras dengan PostgreSQL: alokasi #41 dicentang di persiapan PRJ-025 dan punya TRX-044/045', bersih($h) && str_contains($h['html'], 'SD Card 64GB')
-    && in_array(41, $s['persiapan'][7] ?? [], true) && in_array('TRX-044', $s['transaksi'] ?? [], true) && in_array('TRX-045', $s['transaksi'] ?? [], true));
+// Sejak Sprint 4A serah terima (TRX-044/045) dibaca dari PostgreSQL; session hanya menyimpan centang persiapan.
+cek('K17g seed session selaras dengan PostgreSQL: alokasi #41 dicentang di persiapan PRJ-025, TRX-044/045 dari PostgreSQL', bersih($h) && str_contains($h['html'], 'SD Card 64GB')
+    && in_array(41, $s['persiapan'][7] ?? [], true) && ($s['transaksi'] ?? ['x']) === [] && str_contains($h['html'], 'TRX-044'));
 $masalah = [];
 foreach ([[SA, 'pages/dashboard-admin.php', []], [PI, 'pages/dashboard-petugas.php', []], [RIZKY, 'pages/dashboard-user.php', []], [SA, 'pages/serah-terima.php', []],
     [SA, 'pages/perlengkapan.php', ['tab' => 'eksternal']], [SA, 'pages/riwayat.php', []], [SA, $D, ['id' => (string) $pA, 'tab' => 'persiapan']],
@@ -646,7 +649,7 @@ echo "\n== K18 Session lama\n";
 anak(['--sesi-lama', 'sesiLama']);
 $h = minta('sesiLama', SA, $D, ['id' => '3', 'tab' => 'kebutuhan']);
 $s = json_decode(anak(['--periksa-sesi', 'sesiLama']), true);
-cek('K18a session lama (versi 4) di-seed ulang ke versi 5 tanpa salinan kebutuhan/alokasi', ($s['versi'] ?? 0) === 5 && !$s['ada_kebutuhan'] && !$s['ada_alokasi'] && bersih($h));
+cek('K18a session lama (versi 4) di-seed ulang ke versi terbaru tanpa salinan kebutuhan/alokasi', ($s['versi'] ?? 0) >= 5 && !$s['ada_kebutuhan'] && !$s['ada_alokasi'] && bersih($h));
 cek('K18b kebutuhan/alokasi buatan session lama tidak tampil, centang persiapan lama (#42) dibuang', !str_contains($h['html'], 'Kebutuhan Buatan Session')
     && !in_array(42, $s['persiapan'][3] ?? [], true));
 

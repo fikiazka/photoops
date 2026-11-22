@@ -277,7 +277,7 @@ $sewa_pesan = array_filter([
 <?php if ($a['status'] === 'Dibatalkan'): ?>
 <span class="redup">—</span>
 <?php elseif (isset($b['serah']['keluar'])): ?>
-<?php $sr = $b['serah']; $trx_k = db_cari('transaksi', $sr['trx_keluar'] ?? 0); $penuh = isset($sr['kembali']); $sebagian = !$penuh && ($sr['jumlah_kembali'] ?? 0) > 0; ?>
+<?php $sr = $b['serah']; $trx_k = cari_transaksi($sr['trx_keluar'] ?? 0); $penuh = isset($sr['kembali']); $sebagian = !$penuh && ($sr['jumlah_kembali'] ?? 0) > 0; ?>
 <div class="status-proyek" <?= $penuh ? 'data-kembali-proyek' : 'data-dipakai-proyek' ?>>
 <?= $penuh ? badge('Sudah Kembali', 'Kembali dari proyek') : ($sebagian ? badge('Kembali Sebagian', 'Kembali sebagian') : badge('Sedang Keluar', 'Dipakai proyek')) ?>
 <div class="saldo-proyek" data-saldo-proyek>Keluar <?= (int) ($sr['jumlah_keluar'] ?? $b['jumlah']) ?> · Kembali <?= (int) ($sr['jumlah_kembali'] ?? 0) ?> · Sisa <?= (int) ($sr['sisa'] ?? 0) ?></div>

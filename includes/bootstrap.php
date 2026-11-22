@@ -8,7 +8,10 @@ define('HARI_INI', '2026-11-07');
 // Versi 5 (Sprint Backend 3C): kebutuhan dan alokasi pindah ke PostgreSQL. Checklist persiapan dan serah terima di session
 // menyimpan id alokasi; session lama bisa berisi alokasi buatan session (id 41 dst.) yang di PostgreSQL adalah alokasi lain,
 // jadi session di-seed ulang. Seed session diselaraskan dengan seed PostgreSQL (alokasi #41, TRX-044/045).
-define('VERSI_DATA', 5);
+// Versi 6 (Sprint Backend 4A): serah terima (transaksi_barang, detail_transaksi) pindah ke PostgreSQL. Session lama bisa berisi
+// transaksi buatan session (TRX-046 dst.) yang tidak ada di PostgreSQL, serta catatan insiden dan konfirmasi persiapan yang
+// merujuk transaksi/detail itu; session di-seed ulang agar semua rujukan cocok dengan data PostgreSQL.
+define('VERSI_DATA', 6);
 
 date_default_timezone_set('Asia/Jakarta');
 
@@ -30,17 +33,17 @@ foreach (glob(ROOT . '/data/logic_*.php') as $berkas_logika) {
 
 set_exception_handler('tangani_galat_db');
 
-// Data prototipe modul operasional (proyek, alokasi, serah terima, dll.) masih disimpan di session.
+// Data prototipe modul yang belum dimigrasikan (persiapan, insiden, log session) masih disimpan di session.
 if (!isset($_SESSION['db']) || ($_SESSION['db_versi'] ?? 0) !== VERSI_DATA) {
     $_SESSION['db'] = seed_data();
     $_SESSION['db_versi'] = VERSI_DATA;
 }
-// Akun pengguna, kategori, unit inventaris, proyek, anggota proyek, preset, kebutuhan, dan alokasi hanya dibaca dari
-// PostgreSQL; salinannya di data session tidak dipakai. Preset (Sprint 3B) tidak memerlukan kenaikan VERSI_DATA karena tidak
-// ada data session yang menyimpan id preset (kebutuhan dari preset berupa salinan nama/kategori/jumlah).
+// Akun pengguna, kategori, unit inventaris, proyek, anggota proyek, preset, kebutuhan, alokasi, dan serah terima hanya dibaca
+// dari PostgreSQL; salinannya di data session tidak dipakai. Preset (Sprint 3B) tidak memerlukan kenaikan VERSI_DATA karena
+// tidak ada data session yang menyimpan id preset (kebutuhan dari preset berupa salinan nama/kategori/jumlah).
 unset($_SESSION['db']['pengguna'], $_SESSION['db']['kategori'], $_SESSION['db']['perlengkapan'],
     $_SESSION['db']['proyek'], $_SESSION['db']['anggota_proyek'], $_SESSION['db']['preset'], $_SESSION['db']['detail_preset'],
-    $_SESSION['db']['kebutuhan'], $_SESSION['db']['alokasi']);
+    $_SESSION['db']['kebutuhan'], $_SESSION['db']['alokasi'], $_SESSION['db']['transaksi'], $_SESSION['db']['detail_transaksi']);
 
 // Sesudah POST yang benar-benar mengubah data, konfirmasi persiapan yang syaratnya tidak lagi terpenuhi dicabut secara terpusat.
 // Perubahan unit dan proyek/tim terjadi di PostgreSQL (tidak mengubah session), jadi ditandai lewat inventaris_berubah()

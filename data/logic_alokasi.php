@@ -5,7 +5,7 @@ defined('ROOT') || exit;
 // Kebutuhan proyek dan alokasi barang (Sprint Backend 3C) di PostgreSQL: tabel kebutuhan_proyek dan alokasi_barang.
 //   - Baris alokasi dibaca bersama proyek_id kebutuhannya (JOIN), sehingga kode lama yang memakai $alokasi['proyek_id'] tetap jalan.
 //   - Kolom Rental (diterima_*, sewa_mulai, jatuh_tempo_vendor, kontak_vendor, dikembalikan_vendor_*) ikut di baris alokasi.
-//   - Checklist persiapan (id alokasi yang dicentang) dan serah terima masih di PHP Session dan merujuk id alokasi ini.
+//   - Checklist persiapan (id alokasi yang dicentang) masih di PHP Session; serah terima (Sprint 4A) di PostgreSQL. Keduanya merujuk id alokasi ini.
 //   - Penguncian: setiap perubahan mengunci baris proyek (FOR UPDATE) lebih dulu, sehingga perubahan kebutuhan/alokasi/tim
 //     pada proyek yang sama berjalan bergantian. Alokasi Studio juga mengunci baris unit (perlengkapan) sehingga dua proyek
 //     tidak bisa memesan unit yang sama pada jadwal yang bertabrakan, walaupun dikirim bersamaan.
@@ -87,6 +87,28 @@ function kunci_proyek(int $proyek_id): ?array
     return $baris ? proyek_dari_baris($baris) : null;
 }
 
+// Kunci baris alokasi milik proyek (urut id agar urutan kunci selalu sama). Dipanggil SETELAH kunci_proyek().
+// Hasil: alokasi ber-key id; id yang bukan milik proyek tidak ikut.
+function kunci_alokasi_proyek(int $proyek_id, array $ids): array
+{
+    $ids = array_values(array_unique(array_map('intval', $ids)));
+    sort($ids);
+    if (!$ids) {
+        return [];
+    }
+    $param = ['proyek_id' => $proyek_id];
+    foreach ($ids as $i => $id) {
+        $param['a' . $i] = $id;
+    }
+    $tanda = ':' . implode(', :', array_slice(array_keys($param), 1));
+    $hasil = [];
+    foreach (sql_semua('SELECT ' . KOLOM_ALOKASI . DARI_ALOKASI . " WHERE k.proyek_id = :proyek_id AND a.id IN ($tanda) ORDER BY a.id FOR UPDATE OF a", $param) as $baris) {
+        $baris = alokasi_dari_baris($baris);
+        $hasil[$baris['id']] = $baris;
+    }
+    return $hasil;
+}
+
 // Jumlah unit yang sudah terisi (alokasi selain Dibatalkan) untuk satu kebutuhan, dibaca langsung dari tabel.
 function terisi_kebutuhan_db(int $kebutuhan_id): int
 {
@@ -94,8 +116,8 @@ function terisi_kebutuhan_db(int $kebutuhan_id): int
                            FROM alokasi_barang WHERE kebutuhan_id = :id AND status <> 'Dibatalkan'", ['id' => $kebutuhan_id])['n'];
 }
 
-// Serah terima di PostgreSQL (data contoh) yang merujuk alokasi kebutuhan ini. Serah terima baru masih di session
-// dan diperiksa terpisah oleh pemanggil (kebutuhan_punya_serah / serah_alokasi).
+// Serah terima yang merujuk alokasi kebutuhan ini. Sejak Sprint 4A semua serah terima ada di PostgreSQL, jadi pemeriksaan
+// ini (di dalam kunci proyek) berlaku untuk semua browser.
 function kebutuhan_punya_serah_db(int $kebutuhan_id): bool
 {
     return (bool) sql_satu('SELECT 1 FROM detail_transaksi d JOIN alokasi_barang a ON a.id = d.alokasi_id WHERE a.kebutuhan_id = :id LIMIT 1',
@@ -320,8 +342,9 @@ function tambah_alokasi(int $proyek_id, int $kebutuhan_id, array $isi): array
 }
 
 // Konfirmasi, batalkan, atau hapus alokasi ($aksi = konfirmasi | batalkan | hapus).
-// Alokasi yang punya serah terima di PostgreSQL atau sudah diterima dari vendor dikunci. Serah terima yang masih di session
-// diperiksa pemanggil (serah_alokasi) sebelum fungsi ini dipanggil.
+// Alokasi yang punya serah terima atau sudah diterima dari vendor dikunci. Pencatatan barang keluar (proses_checkout) juga
+// mengunci proyek lalu alokasi lebih dulu, jadi pembatalan dan barang keluar yang bersamaan berjalan bergantian: yang kedua
+// melihat hasil yang pertama. detail_transaksi.alokasi_id (FOREIGN KEY tanpa CASCADE) menjadi pengaman terakhir untuk hapus.
 // Hasil: ['status' => ok | proyek_tutup | tidak_ada | punya_serah | bukan_rencana | unit_tidak_layak | sudah_batal | rental_diterima, 'lama' => alokasi].
 function ubah_status_alokasi(int $proyek_id, int $alokasi_id, string $aksi): array
 {
@@ -382,6 +405,9 @@ function simpan_catatan_rental(int $alokasi_id, array $kolom, string $syarat, ar
 {
     $set = implode(', ', array_map(fn ($k) => $k . ' = :' . $k, array_keys($kolom)));
     $berhasil = sql_transaksi(function () use ($alokasi_id, $kolom, $set, $syarat, $syarat_param, $riwayat) {
+        // Kunci baris dulu (sama dengan proses_checkout), lalu UPDATE sebagai perintah baru yang melihat data terbaru
+        // (misalnya barang keluar yang baru saja dicatat browser lain).
+        sql_jalankan('SELECT id FROM alokasi_barang WHERE id = :id FOR UPDATE', ['id' => $alokasi_id]);
         $ubah = sql_jalankan("UPDATE alokasi_barang SET $set WHERE id = :id AND sumber = 'Rental' AND ($syarat)", $kolom + $syarat_param + ['id' => $alokasi_id]);
         if ($ubah->rowCount() !== 1) {
             return false;
