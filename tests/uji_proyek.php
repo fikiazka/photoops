@@ -558,7 +558,7 @@ cek('Q19 kolom Proyek di Manajemen Pengguna (PIC + kru) sama di dua browser dan 
 anak(['--sesi-lama', 'sesiLama']);
 $h = minta('sesiLama', SA, $L);
 $s = json_decode(anak(['--periksa-sesi', 'sesiLama', '11']), true);
-cek('Q20a session lama di-seed ulang (versi terbaru) tanpa salinan proyek/anggota', ($s['versi'] ?? 0) >= 4 && !$s['ada_proyek'] && !$s['ada_anggota'] && bersih($h));
+cek('Q20a session lama dibuang: tanpa salinan proyek/anggota (sejak 4C tidak ada data bisnis di session)', ($s['versi'] ?? null) === null && !$s['ada_proyek'] && !$s['ada_anggota'] && bersih($h));
 cek('Q20b kebutuhan session yang merujuk proyek buatan session (#11) ikut dibuang', ($s['kebutuhan_proyek_11'] ?? -1) === 0 && !str_contains($h['html'], 'Proyek Buatan Session'));
 
 echo PHP_EOL . ($gagal ? "GAGAL: $gagal" : 'OK') . " ($lulus lulus, $gagal gagal)" . PHP_EOL;

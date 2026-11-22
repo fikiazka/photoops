@@ -135,14 +135,14 @@ if (($argv[1] ?? '') === '--fungsi') {
             });
             echo 'TANPA_GALAT';
         } elseif ($jenis === 'rb_kembali') {
-            proses_session_dan_inventaris(function () use ($proyek, $a, $kini, $per, $sabotase) {
+            transaksi_inventaris(function () use ($proyek, $a, $kini, $per, $sabotase) {
                 proses_pengembalian($proyek, [['alokasi' => $a, 'per_kondisi' => $per('Rusak', 1)]], null, $kini, 'uji rollback rusak');
                 $sabotase();
             });
             echo 'TANPA_GALAT';
         }
     } catch (PDOException $e) {
-        echo 'GAGAL_PDO:' . $e->getCode() . ':insiden=' . count(db('insiden'));
+        echo 'GAGAL_PDO:' . $e->getCode();
     }
     exit;
 }
@@ -466,9 +466,9 @@ cek('S04b pengembalian penuh unit Studio tercatat', saldo($aStudio)['sisa'] === 
 cek('S12a kondisi kembali, catatan, dan penyerah tersimpan di transaksi', ($detail_rusak[0]['kondisi'] ?? '') === 'Rusak'
     && ($detail_rusak[0]['catatan'] ?? '') === 'Lensa mount retak saat bongkar' && (int) ($detail_rusak[0]['penyerah_id'] ?? 0) === NINA);
 cek('S12b kondisi unit di Inventaris ikut menjadi Rusak (transaksi yang sama)', satu('SELECT kondisi FROM perlengkapan WHERE id = :u', ['u' => $U1['id']]) === 'Rusak');
-$s = json_decode(anak(['--periksa-sesi', 'admin']), true);
-$ins = array_values(array_filter($s['insiden'] ?? [], fn ($x) => str_ends_with($x, '|' . $detail_rusak[0]['id'] . '|' . $U1['id'])));
-cek('S12c insiden otomatis tercatat dan menunjuk detail_transaksi PostgreSQL', count($ins) === 1 && str_contains($h['pesan'], 'Insiden dicatat'), json_encode($s['insiden'] ?? []));
+// Sejak Sprint 4C insiden otomatis tersimpan di laporan_insiden (PostgreSQL), bukan di session.
+$ins = (int) satu('SELECT COUNT(*) FROM laporan_insiden WHERE detail_id = :d AND perlengkapan_id = :u', ['d' => $detail_rusak[0]['id'] ?? 0, 'u' => $U1['id']]);
+cek('S12c insiden otomatis tercatat di laporan_insiden dan menunjuk detail_transaksi PostgreSQL', $ins === 1 && str_contains($h['pesan'], 'Insiden dicatat'), (string) $ins);
 cek('S12d riwayat Pengembalian mencatat kondisi dan kode insiden', riwayat_baru('Pengembalian', '%', '%kondisi 1 Rusak%insiden INS-%') === 1);
 $h = minta('petugasB', PI, 'pages/perlengkapan.php');
 $pos = strpos($h['html'], $U1['kode_unit']);
@@ -559,9 +559,10 @@ $r = anak(['--fungsi', 'rb_keluar', 'rb1', (string) $p6, (string) $a6]);
 cek('S15a barang keluar: langkah terakhir gagal -> transaksi, rincian, dan riwayat dibatalkan', str_starts_with($r, 'GAGAL_PDO:23514') && trx_baru() === $sebelum
     && jumlah_keluar_detail($a6) === 0 && (int) satu('SELECT COUNT(*) FROM riwayat_aktivitas') === $riwayat_sebelum, $r);
 $kondisi_u2 = satu('SELECT kondisi FROM perlengkapan WHERE id = :u', ['u' => $U2['id']]);
+$insiden_sebelum = (int) satu('SELECT COUNT(*) FROM laporan_insiden');
 $r = anak(['--fungsi', 'rb_kembali', 'rb2', (string) $p3, (string) $a3]);
-cek('S15b pengembalian Rusak: langkah terakhir gagal -> transaksi, kondisi unit, riwayat, dan insiden session dibatalkan', str_starts_with($r, 'GAGAL_PDO:23514')
-    && str_ends_with($r, 'insiden=3') && saldo($a3)['sisa'] === 1 && satu('SELECT kondisi FROM perlengkapan WHERE id = :u', ['u' => $U2['id']]) === $kondisi_u2
+cek('S15b pengembalian Rusak: langkah terakhir gagal -> transaksi, kondisi unit, insiden, dan riwayat dibatalkan', str_starts_with($r, 'GAGAL_PDO:23514')
+    && (int) satu('SELECT COUNT(*) FROM laporan_insiden') === $insiden_sebelum && saldo($a3)['sisa'] === 1 && satu('SELECT kondisi FROM perlengkapan WHERE id = :u', ['u' => $U2['id']]) === $kondisi_u2
     && (int) satu('SELECT COUNT(*) FROM riwayat_aktivitas') === $riwayat_sebelum, $r);
 
 echo "\n== S18 Persiapan\n";
@@ -610,7 +611,7 @@ cek('S20b daftar transaksi menampilkan data contoh (TRX-044) dan barang di luar 
 anak(['--sesi-lama', 'sesiLama']);
 $h = minta('sesiLama', SA, $S);
 $s = json_decode(anak(['--periksa-sesi', 'sesiLama']), true);
-cek('S20c session lama (versi 5) di-seed ulang ke versi 6; transaksi buatan session tidak tampil', ($s['versi'] ?? 0) === 6 && !$s['ada_transaksi']
+cek('S20c session lama (versi 5) dibuang seluruhnya (sejak 4C tidak ada data bisnis di session); transaksi buatan session tidak tampil', ($s['versi'] ?? null) === null && !$s['ada_transaksi']
     && !str_contains($h['html'], 'TRX-SESI') && bersih($h));
 
 echo PHP_EOL . ($gagal ? "GAGAL: $gagal" : 'OK') . " ($lulus lulus, $gagal gagal)" . PHP_EOL;

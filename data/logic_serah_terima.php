@@ -535,22 +535,13 @@ function proses_pengembalian(array $proyek, array $item, ?array $penyerah, strin
                 continue;
             }
             if ($alokasi_baris['sumber'] === 'Studio') {
-                // Kondisi unit diubah di transaksi yang sama (kunci baris unit). Catatan insiden masih di session; bila
-                // transaksi gagal, session dikembalikan oleh proses_session_dan_inventaris().
-                $unit_db = sql_satu('SELECT kondisi FROM perlengkapan WHERE id = :id FOR UPDATE', ['id' => $alokasi_baris['perlengkapan_id']]);
-                if ($unit_db && $unit_db['kondisi'] !== $kondisi) {
-                    ubah_kondisi_unit((int) $alokasi_baris['perlengkapan_id'], $kondisi);
-                }
-                $unit = cari_perlengkapan((int) $alokasi_baris['perlengkapan_id']);
+                // Insiden otomatis (Sprint 4C): laporan di laporan_insiden yang menunjuk rincian pengembalian ini (detail_id
+                // UNIQUE), kondisi unit, dan riwayatnya ditulis di transaksi yang sama dengan pengembalian. Bila salah satu
+                // gagal, pengembalian ikut di-ROLLBACK.
                 $deskripsi = ($catatan !== '' ? $catatan . ' · ' : '') . 'Dilaporkan saat pengembalian ' . $kode . ' (barang keluar ' . (cari_transaksi($saldo[$id]['trx_keluar'])['kode'] ?? '?') . ').';
-                $kode_ins = lapor_insiden((int) $alokasi_baris['perlengkapan_id'], $pid, $kondisi === 'Rusak' ? 'Rusak' : 'Masalah Teknis', $deskripsi, $kondisi);
-                foreach (db('insiden') as $ins) {
-                    if ($ins['kode'] === $kode_ins) {
-                        db_ubah('insiden', (int) $ins['id'], ['transaksi_id' => $trx_id, 'alokasi_id' => $id, 'detail_id' => $detail_id]);
-                    }
-                }
-                $bermasalah[] = $unit['kode_unit'] ?? '?';
-                $insiden[] = $kode_ins;
+                $ins = lapor_insiden((int) $alokasi_baris['perlengkapan_id'], $pid, $kondisi === 'Rusak' ? 'Rusak' : 'Masalah Teknis', $deskripsi, $kondisi, $detail_id);
+                $bermasalah[] = cari_perlengkapan((int) $alokasi_baris['perlengkapan_id'])['kode_unit'] ?? '?';
+                $insiden[] = $ins['kode'] ?? '?';
             } else {
                 $eksternal_bermasalah[] = $alokasi_baris['nama_barang'] . ' ' . $jumlah . ' ' . $kondisi;
             }
@@ -571,13 +562,14 @@ function proses_pengembalian(array $proyek, array $item, ?array $penyerah, strin
     return ['status' => 'ok', 'kode' => $kode, 'total' => $total, 'per_sumber' => $per_sumber, 'per_kondisi' => $per_kondisi, 'sisa_proyek' => $sisa_proyek, 'bermasalah' => $bermasalah, 'eksternal_bermasalah' => $eksternal_bermasalah, 'insiden' => $insiden];
 }
 
-// Catat pengembalian dalam SATU transaksi PostgreSQL (kepala, rincian, kondisi unit, riwayat). Catatan insiden (masih
-// di session) ikut dikembalikan bila transaksi gagal.
+// Catat pengembalian dalam SATU transaksi PostgreSQL: kepala, rincian, kondisi unit, insiden otomatis, dan riwayat.
+// Bila salah satu gagal, semuanya di-ROLLBACK.
 function catat_pengembalian(array $proyek, array $item, ?array $penyerah, string $waktu, string $catatan): array
 {
-    $hasil = proses_session_dan_inventaris(fn () => proses_pengembalian($proyek, $item, $penyerah, $waktu, $catatan));
+    $hasil = transaksi_inventaris(fn () => proses_pengembalian($proyek, $item, $penyerah, $waktu, $catatan));
     if ($hasil['status'] === 'ok') {
         muat_ulang_serah();
+        muat_ulang_insiden();
     }
     return $hasil;
 }

@@ -72,9 +72,8 @@ if (($argv[1] ?? '') === '--sesi-lama') {
     session_name('photoops');
     session_id($argv[2]);
     session_start();
-    define('ROOT', AKAR_UJI);
-    require AKAR_UJI . '/data/seed.php';
-    $db = seed_data();
+    // Sejak Sprint 4C data/seed.php sudah tidak ada; session lama disusun langsung.
+    $db = ['insiden' => [], 'riwayat' => []];
     $db['preset'][99] = ['id' => 99, 'nama' => 'Preset Buatan Session', 'deskripsi' => '', 'dibuat_oleh' => 1, 'diubah_pada' => '2026-11-01 10:00'];
     $db['detail_preset'][99] = ['id' => 99, 'preset_id' => 99, 'nama_perlengkapan' => 'Model Session', 'kategori_id' => 1, 'jumlah' => 1];
     $_SESSION = ['db_versi' => 4, 'db' => $db];

@@ -651,7 +651,7 @@ echo "\n== K18 Session lama\n";
 anak(['--sesi-lama', 'sesiLama']);
 $h = minta('sesiLama', SA, $D, ['id' => '3', 'tab' => 'kebutuhan']);
 $s = json_decode(anak(['--periksa-sesi', 'sesiLama']), true);
-cek('K18a session lama (versi 4) di-seed ulang ke versi terbaru tanpa salinan kebutuhan/alokasi', ($s['versi'] ?? 0) >= 5 && !$s['ada_kebutuhan'] && !$s['ada_alokasi'] && bersih($h));
+cek('K18a session lama (versi 4) dibuang: tanpa salinan kebutuhan/alokasi (sejak 4C tidak ada data bisnis di session)', ($s['versi'] ?? null) === null && !$s['ada_kebutuhan'] && !$s['ada_alokasi'] && bersih($h));
 cek('K18b kebutuhan/alokasi buatan session lama tidak tampil, centang persiapan lama (#42) dibuang', !str_contains($h['html'], 'Kebutuhan Buatan Session')
     && !in_array(42, $s['persiapan'][3] ?? [], true));
 

@@ -68,7 +68,7 @@ if (is_post()) {
         wajib_boleh('insiden.kelola');
         $data = ['perlengkapan_id' => input('perlengkapan_id'), 'jenis' => input('jenis'), 'kondisi' => input('kondisi'), 'proyek_id' => input('proyek_id'), 'deskripsi' => input('deskripsi')];
         $galat = [];
-        if (!cari_perlengkapan((int) $data['perlengkapan_id'])) {
+        if (!preg_match('/^\d{1,9}$/', $data['perlengkapan_id']) || !cari_perlengkapan((int) $data['perlengkapan_id'])) {
             $galat['perlengkapan_id'] = 'Pilih unit.';
         }
         if (!in_array($data['jenis'], ['Rusak', 'Masalah Teknis'], true)) {
@@ -77,16 +77,24 @@ if (is_post()) {
         if (!in_array($data['kondisi'], ['Maintenance', 'Rusak'], true)) {
             $galat['kondisi'] = 'Pilih kondisi.';
         }
+        // Proyek opsional; bila diisi harus proyek yang ada (sebelumnya id tidak dikenal diabaikan diam-diam).
+        if ($data['proyek_id'] !== '' && (!preg_match('/^\d{1,9}$/', $data['proyek_id']) || !cari_proyek((int) $data['proyek_id']))) {
+            $galat['proyek_id'] = 'Pilih proyek dari daftar, atau kosongkan.';
+        }
         if (mb_strlen($data['deskripsi']) < 5) {
             $galat['deskripsi'] = 'Jelaskan masalahnya minimal 5 karakter.';
+        } elseif (mb_strlen($data['deskripsi']) > 300) {
+            $galat['deskripsi'] = 'Deskripsi maksimal 300 karakter.';
         }
         if ($galat) {
             simpan_form('dialog-insiden', $data, $galat);
             muat_ulang();
         }
-        $proyek_insiden = cari_proyek((int) $data['proyek_id']) ? (int) $data['proyek_id'] : null;
+        $proyek_insiden = $data['proyek_id'] !== '' ? (int) $data['proyek_id'] : null;
         try {
-            $kode = proses_session_dan_inventaris(fn () => lapor_insiden((int) $data['perlengkapan_id'], $proyek_insiden, $data['jenis'], $data['deskripsi'], $data['kondisi']));
+            // Laporan, kondisi unit, dan riwayat tersimpan di PostgreSQL dalam satu transaksi; kode dari seq_kode_insiden.
+            $hasil = catat_insiden_manual((int) $data['perlengkapan_id'], $proyek_insiden, $data['jenis'], $data['deskripsi'], $data['kondisi']);
+            $kode = $hasil['kode'] ?? '';
         } catch (Throwable $e) {
             if (!galat_db($e)) {
                 throw $e;
@@ -101,24 +109,18 @@ if (is_post()) {
 
     if (in_array($aksi, ['tangani_insiden', 'selesaikan_insiden'], true)) {
         wajib_boleh('insiden.kelola');
-        $insiden = db_cari('insiden', (int) input('id'));
-        if ($insiden) {
-            $unit = cari_perlengkapan((int) $insiden['perlengkapan_id']);
-            if ($aksi === 'tangani_insiden') {
-                db_ubah('insiden', $insiden['id'], ['status' => 'Ditangani']);
-                catat_riwayat('Insiden', label_unit($unit), $insiden['kode'] . ' mulai ditangani', $insiden['status'], 'Ditangani');
-                flash('sukses', $insiden['kode'] . ' ditandai sedang ditangani.');
-            } else {
-                // Insiden terbuka lain untuk unit yang sama (selain insiden ini).
-                $masih = array_filter(insiden_terbuka(), fn ($i) => (int) $i['perlengkapan_id'] === (int) $insiden['perlengkapan_id'] && (int) $i['id'] !== (int) $insiden['id']);
-                // Kondisi unit (PostgreSQL) diubah lebih dulu: bila database gagal, status insiden di session belum berubah.
-                if ($unit && !$masih && $unit['kondisi'] !== 'Baik') {
-                    ubah_kondisi_unit($unit['id'], 'Baik');
-                }
-                db_ubah('insiden', $insiden['id'], ['status' => 'Selesai']);
-                catat_riwayat('Insiden', label_unit($unit), $insiden['kode'] . ' selesai, unit kembali layak pakai', $unit['kondisi'] ?? '', $masih ? ($unit['kondisi'] ?? '') : 'Baik');
-                flash('sukses', $insiden['kode'] . ' selesai.' . ($unit && !$masih ? ' ' . $unit['kode_unit'] . ' kembali berkondisi Baik.' : ''));
-            }
+        // Status, kondisi unit, dan riwayat diubah di PostgreSQL dalam satu transaksi berkunci; transisi dicek ulang di sana
+        // (insiden bisa sudah diubah dari browser lain sejak halaman dibuka).
+        $hasil = ubah_status_insiden(preg_match('/^\d{1,9}$/', input('id')) ? (int) input('id') : 0, $aksi === 'tangani_insiden' ? 'tangani' : 'selesaikan');
+        if ($hasil['status'] === 'tidak_ada') {
+            flash('error', 'Laporan insiden tidak ditemukan.');
+        } elseif ($hasil['status'] === 'transisi_tidak_sah') {
+            flash('error', $hasil['insiden']['kode'] . ' sudah berstatus ' . $hasil['insiden']['status'] . ', jadi tidak bisa ' . ($aksi === 'tangani_insiden' ? 'ditandai ditangani' : 'diselesaikan') . ' lagi.');
+        } elseif ($aksi === 'tangani_insiden') {
+            flash('sukses', $hasil['insiden']['kode'] . ' ditandai sedang ditangani.');
+        } else {
+            flash('sukses', $hasil['insiden']['kode'] . ' selesai.' . ($hasil['masih_terbuka'] ? ' ' . $hasil['unit']['kode_unit'] . ' masih punya ' . $hasil['masih_terbuka'] . ' insiden terbuka, jadi kondisinya tidak diubah.'
+                : ($hasil['unit']['kondisi'] !== 'Baik' ? ' ' . $hasil['unit']['kode_unit'] . ' kembali berkondisi Baik.' : '')));
         }
         muat_ulang();
     }
