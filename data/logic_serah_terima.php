@@ -56,7 +56,7 @@ function alasan_tidak_bisa_keluar(array $alokasi, array $diperiksa): string
         return 'Alokasi belum dikonfirmasi';
     }
     $pid = (int) $alokasi['proyek_id'];
-    if (!alokasi_sesuai_kebutuhan($alokasi, db_cari('kebutuhan', (int) $alokasi['kebutuhan_id']), $pid)) {
+    if (!alokasi_sesuai_kebutuhan($alokasi, cari_kebutuhan((int) $alokasi['kebutuhan_id']), $pid)) {
         return 'Tidak sesuai dengan kebutuhan proyek';
     }
     if ($alokasi['sumber'] === 'Studio') {
@@ -132,7 +132,7 @@ function teks_per_sumber(array $per_sumber): string
 function unit_belum_kembali(?int $proyek_id = null): array
 {
     $hasil = [];
-    foreach (db('alokasi') as $alokasi) {
+    foreach (semua_alokasi() as $alokasi) {
         if ($alokasi['sumber'] !== 'Studio' || !sedang_keluar($alokasi)) {
             continue;
         }
@@ -150,7 +150,7 @@ function barang_di_luar(?int $proyek_id = null): array
     // Sprint 3C: 'jumlah' = saldo yang masih di proyek (keluar - akumulasi kembali).
     $hasil = [];
     $transaksi = db('transaksi');
-    foreach (db('alokasi') as $alokasi) {
+    foreach (semua_alokasi() as $alokasi) {
         if (!sedang_keluar($alokasi) || ($proyek_id !== null && (int) $alokasi['proyek_id'] !== $proyek_id)) {
             continue;
         }

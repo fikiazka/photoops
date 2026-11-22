@@ -234,8 +234,8 @@ function sudah_kembali(array $alokasi): bool
 
 function alokasi_keluar_unit(int $unit_id): ?array
 {
-    foreach (db('alokasi') as $alokasi) {
-        if ($alokasi['sumber'] === 'Studio' && (int) $alokasi['perlengkapan_id'] === $unit_id && sedang_keluar($alokasi)) {
+    foreach (semua_alokasi() as $alokasi) {
+        if ($alokasi['sumber'] === 'Studio' && $alokasi['perlengkapan_id'] === $unit_id && sedang_keluar($alokasi)) {
             return $alokasi;
         }
     }
@@ -256,8 +256,8 @@ function status_pemakaian(array $unit): string
 function alokasi_aktif_unit(int $unit_id): array
 {
     $hasil = [];
-    foreach (db('alokasi') as $alokasi) {
-        if ($alokasi['sumber'] === 'Studio' && (int) $alokasi['perlengkapan_id'] === $unit_id && $alokasi['status'] !== 'Dibatalkan' && !sudah_kembali($alokasi)) {
+    foreach (semua_alokasi() as $alokasi) {
+        if ($alokasi['sumber'] === 'Studio' && $alokasi['perlengkapan_id'] === $unit_id && $alokasi['status'] !== 'Dibatalkan' && !sudah_kembali($alokasi)) {
             $hasil[] = $alokasi;
         }
     }
@@ -294,21 +294,32 @@ function cek_unit_untuk_proyek(array $unit, array $proyek): array
     if ($unit['kondisi'] !== 'Baik') {
         return ['blokir' => 'Kondisi ' . $unit['kondisi'], 'catatan' => ''];
     }
+    // Aturan blokir sama dengan bentrok_unit_db() yang dicek ulang di dalam transaksi tambah_alokasi(): semua alokasi unit
+    // ini selain Dibatalkan (PostgreSQL), termasuk yang barangnya sudah kembali, karena status kembali masih per browser.
     [$mulai, $selesai] = rentang_alokasi($proyek);
-    $catatan = '';
-    foreach (alokasi_aktif_unit($unit['id']) as $alokasi) {
-        $lain = cari_proyek($alokasi['proyek_id']);
-        if ((int) $alokasi['proyek_id'] === (int) $proyek['id']) {
+    foreach (jadwal_unit($unit['id']) as $alokasi) {
+        if ($alokasi['proyek_id'] === (int) $proyek['id']) {
             return ['blokir' => 'Sudah dipakai di proyek ini', 'catatan' => ''];
         }
+    }
+    foreach (jadwal_unit($unit['id']) as $alokasi) {
         if (tumpang_tindih($mulai, $selesai, $alokasi['tgl_mulai'], $alokasi['tgl_selesai'])) {
+            $lain = cari_proyek($alokasi['proyek_id']);
             return ['blokir' => 'Bentrok dengan ' . ($lain['kode'] ?? '?') . ' (' . rentang_tgl($alokasi['tgl_mulai'], $alokasi['tgl_selesai']) . ')', 'catatan' => ''];
         }
-        if (sedang_keluar($alokasi)) {
-            $catatan = 'Masih keluar di ' . ($lain['kode'] ?? '?');
-        }
     }
+    // Catatan "masih keluar" hanya informasi dan berasal dari serah terima (PHP Session browser ini).
+    $keluar = alokasi_keluar_unit($unit['id']);
+    $catatan = $keluar && $keluar['proyek_id'] !== (int) $proyek['id'] ? 'Masih keluar di ' . (cari_proyek($keluar['proyek_id'])['kode'] ?? '?') : '';
     return ['blokir' => '', 'catatan' => $catatan];
+}
+
+// Semua alokasi unit Studio selain Dibatalkan, urut tanggal mulai (dasar pemeriksaan bentrok jadwal).
+function jadwal_unit(int $unit_id): array
+{
+    $hasil = array_values(array_filter(semua_alokasi(), fn ($a) => $a['sumber'] === 'Studio' && $a['perlengkapan_id'] === $unit_id && $a['status'] !== 'Dibatalkan'));
+    usort($hasil, fn ($a, $b) => strcmp($a['tgl_mulai'], $b['tgl_mulai']));
+    return $hasil;
 }
 
 // Stok per nama model: unit Studio aktif (PostgreSQL) dan yang tersedia HARI INI. "Tersedia" = kondisi Baik dan tidak
@@ -335,7 +346,7 @@ function stok_model(): array
 function frekuensi_pakai(): array
 {
     $hasil = array_fill_keys(array_keys(semua_perlengkapan()), 0);
-    foreach (db('alokasi') as $alokasi) {
+    foreach (semua_alokasi() as $alokasi) {
         if ($alokasi['sumber'] === 'Studio' && $alokasi['status'] !== 'Dibatalkan' && isset($hasil[$alokasi['perlengkapan_id']])) {
             $hasil[$alokasi['perlengkapan_id']]++;
         }
@@ -441,7 +452,7 @@ function daftar_barang_eksternal(): array
 {
     $diperiksa = [];
     $hasil = [];
-    foreach (db('alokasi') as $alokasi) {
+    foreach (semua_alokasi() as $alokasi) {
         if ($alokasi['sumber'] === 'Studio') {
             continue;
         }
@@ -451,7 +462,7 @@ function daftar_barang_eksternal(): array
         $hasil[] = [
             'alokasi' => $alokasi,
             'proyek' => $proyek,
-            'kebutuhan' => db_cari('kebutuhan', (int) $alokasi['kebutuhan_id']),
+            'kebutuhan' => cari_kebutuhan((int) $alokasi['kebutuhan_id']),
             'jumlah' => jumlah_alokasi($alokasi),
             'asal' => $alokasi['sumber'] === 'Rental' ? $alokasi['vendor'] : nama_pengguna($alokasi['pemilik_id']),
             'diperiksa' => alokasi_diperiksa($alokasi, $diperiksa[$pid]),
@@ -609,15 +620,27 @@ function proses_aksi_rental(string $aksi, array $alokasi, array $pengguna): arra
         if ($galat) {
             return ['galat' => $galat];
         }
+        // Sejak Sprint Backend 3C catatan rental disimpan di baris alokasi_barang (PostgreSQL). Syarat UPDATE mencegah dua
+        // browser mencatat penerimaan/pengembalian yang sama dua kali.
         if ($terima) {
             $centang_lama = in_array((int) $alokasi['id'], id_diperiksa((int) $alokasi['proyek_id']), true);
-            db_ubah('alokasi', (int) $alokasi['id'], ['diterima_pada' => $waktu, 'diterima_oleh' => $pengguna['id'], 'kondisi_terima' => $kondisi, 'catatan_terima' => $catatan]);
+            $ok = simpan_catatan_rental((int) $alokasi['id'],
+                ['diterima_pada' => $waktu, 'diterima_oleh' => $pengguna['id'], 'kondisi_terima' => $kondisi, 'catatan_terima' => $catatan],
+                "status = 'Dikonfirmasi' AND diterima_pada IS NULL", [],
+                [$label, $jumlah . ' unit diterima dari ' . $alokasi['vendor'] . ', kondisi ' . $kondisi . ($catatan !== '' ? ' · ' . $catatan : '') . ($centang_lama ? ' · centang persiapan lama (sebelum penerimaan) direset' : '')]);
+            if (!$ok) {
+                return ['umum' => $nama . ' sudah diubah pengguna lain (misalnya sudah tercatat diterima atau alokasinya berubah). Muat ulang halaman.'];
+            }
             lepas_dari_checklist((int) $alokasi['proyek_id'], [(int) $alokasi['id']]);
-            catat_riwayat('Rental', $label, $jumlah . ' unit diterima dari ' . $alokasi['vendor'] . ', kondisi ' . $kondisi . ($catatan !== '' ? ' · ' . $catatan : '') . ($centang_lama ? ' · centang persiapan lama (sebelum penerimaan) direset' : ''));
             return ['sukses' => $nama . ': penerimaan ' . $jumlah . ' unit dicatat. ' . ($centang_lama ? 'Centang persiapan lama dari sebelum penerimaan direset; periksa barang lalu centang ulang di Persiapan proyek.' : 'Centang di Persiapan proyek setelah barang diperiksa.')];
         }
-        db_ubah('alokasi', (int) $alokasi['id'], ['dikembalikan_vendor_pada' => $waktu, 'dikembalikan_vendor_oleh' => $pengguna['id'], 'kondisi_kembali_vendor' => $kondisi, 'catatan_kembali_vendor' => $catatan]);
-        catat_riwayat('Rental', $label, $jumlah . ' unit dikembalikan ke ' . $alokasi['vendor'] . ', kondisi ' . $kondisi . ($catatan !== '' ? ' · ' . $catatan : ''));
+        $ok = simpan_catatan_rental((int) $alokasi['id'],
+            ['dikembalikan_vendor_pada' => $waktu, 'dikembalikan_vendor_oleh' => $pengguna['id'], 'kondisi_kembali_vendor' => $kondisi, 'catatan_kembali_vendor' => $catatan],
+            "status <> 'Dibatalkan' AND diterima_pada IS NOT NULL AND dikembalikan_vendor_pada IS NULL", [],
+            [$label, $jumlah . ' unit dikembalikan ke ' . $alokasi['vendor'] . ', kondisi ' . $kondisi . ($catatan !== '' ? ' · ' . $catatan : '')]);
+        if (!$ok) {
+            return ['umum' => $nama . ' sudah diubah pengguna lain (misalnya sudah tercatat dikembalikan ke vendor). Muat ulang halaman.'];
+        }
         return ['sukses' => $nama . ': pengembalian ' . $jumlah . ' unit ke vendor dicatat.'];
     }
 
@@ -658,14 +681,17 @@ function proses_aksi_rental(string $aksi, array $alokasi, array $pengguna): arra
         if ($galat) {
             return ['galat' => $galat];
         }
+        $berubah = $nama . ' sudah diubah pengguna lain (jatuh tempo atau status pengembaliannya berubah). Muat ulang halaman.';
         if ($atur) {
-            db_ubah('alokasi', (int) $alokasi['id'], ['jatuh_tempo_vendor' => $baru, 'sewa_mulai' => $mulai, 'kontak_vendor' => $kontak]);
-            catat_riwayat('Rental', $label, 'Jatuh tempo vendor diatur', '', tgl($baru));
-            return ['sukses' => $nama . ': jatuh tempo vendor diatur ke ' . tgl($baru, 'panjang') . '.'];
+            $ok = simpan_catatan_rental((int) $alokasi['id'], ['jatuh_tempo_vendor' => $baru, 'sewa_mulai' => $mulai, 'kontak_vendor' => $kontak],
+                "status <> 'Dibatalkan' AND dikembalikan_vendor_pada IS NULL AND jatuh_tempo_vendor IS NULL", [],
+                [$label, 'Jatuh tempo vendor diatur', '', tgl($baru)]);
+            return $ok ? ['sukses' => $nama . ': jatuh tempo vendor diatur ke ' . tgl($baru, 'panjang') . '.'] : ['umum' => $berubah];
         }
-        db_ubah('alokasi', (int) $alokasi['id'], ['jatuh_tempo_vendor' => $baru]);
-        catat_riwayat('Rental', $label, 'Masa sewa diperpanjang' . ($alasan !== '' ? ' · ' . $alasan : ''), tgl($info['jatuh_tempo']), tgl($baru));
-        return ['sukses' => $nama . ': masa sewa diperpanjang sampai ' . tgl($baru, 'panjang') . '.'];
+        $ok = simpan_catatan_rental((int) $alokasi['id'], ['jatuh_tempo_vendor' => $baru],
+            "status <> 'Dibatalkan' AND dikembalikan_vendor_pada IS NULL AND jatuh_tempo_vendor = :tempo_lama", ['tempo_lama' => $info['jatuh_tempo']],
+            [$label, 'Masa sewa diperpanjang' . ($alasan !== '' ? ' · ' . $alasan : ''), tgl($info['jatuh_tempo']), tgl($baru)]);
+        return $ok ? ['sukses' => $nama . ': masa sewa diperpanjang sampai ' . tgl($baru, 'panjang') . '.'] : ['umum' => $berubah];
     }
     return ['umum' => 'Aksi rental tidak dikenal.'];
 }

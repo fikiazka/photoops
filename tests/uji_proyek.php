@@ -393,13 +393,12 @@ cek('Q06d mantan PIC masih bisa membuka proyek sebagai kru', bersih($h) && str_c
 
 // Q09 lepas kru: ditolak bila masih membawa barang Milik Kru, lalu berhasil setelah alokasinya tidak ada
 minta('admin', SA, $D, ['id' => (string) $pid1], ['aksi' => 'simpan_kebutuhan', 'id' => '', 'nama' => 'SD Card cadangan', 'acuan' => '', 'kategori_id' => '5', 'jumlah' => '1']);
-$s = json_decode(anak(['--periksa-sesi', 'admin', (string) $pid1]), true);
-$kb = $s['kebutuhan'][0] ?? 0;
+// Sejak Sprint 3C kebutuhan dan alokasi ada di PostgreSQL.
+$kb = (int) satu('SELECT id FROM kebutuhan_proyek WHERE proyek_id = :p ORDER BY id DESC LIMIT 1', ['p' => $pid1]);
 $h = minta('admin', SA, $D, ['id' => (string) $pid1], ['aksi' => 'tambah_alokasi', 'kebutuhan_id' => (string) $kb, 'sumber' => 'Milik Kru',
     'nama_barang' => 'SD Card milik Nina', 'pemilik_id' => (string) NINA, 'jumlah' => '1', 'status' => 'Dikonfirmasi', 'catatan' => '']);
-$s = json_decode(anak(['--periksa-sesi', 'admin', (string) $pid1]), true);
-$alokasi_nina = $s['alokasi'][0] ?? 0;
-cek('Q09a (persiapan uji) alokasi Milik Kru Nina tercatat di session untuk proyek PostgreSQL', $kb > 0 && $alokasi_nina > 0, $h['pesan']);
+$alokasi_nina = (int) satu('SELECT id FROM alokasi_barang WHERE kebutuhan_id = :k ORDER BY id DESC LIMIT 1', ['k' => $kb]);
+cek('Q09a (persiapan uji) alokasi Milik Kru Nina tercatat di PostgreSQL untuk proyek uji', $kb > 0 && $alokasi_nina > 0, $h['pesan']);
 $id_nina = (int) satu('SELECT id FROM anggota_proyek WHERE proyek_id = :p AND pengguna_id = :u', ['p' => $pid1, 'u' => NINA]);
 $h = minta('admin', SA, $D, ['id' => (string) $pid1], ['aksi' => 'lepas_anggota', 'id' => (string) $id_nina]);
 cek('Q09b lepas kru yang masih membawa barang Milik Kru ditolak', in_array(NINA, kru_db($pid1), true) && str_contains($h['pesan'], 'masih tercatat membawa'), $h['pesan']);
@@ -461,8 +460,14 @@ $r = anak(['--fungsi', 'rollback_ubah', (string) $pid1]);
 cek('Q14b ubah proyek + ganti PIC: riwayat gagal -> proyek dan kru tidak berubah', str_starts_with($r, 'GAGAL_PDO:23503') && proyek_db('UJI3A Satu') == $sebelum && kru_db($pid1) === $kru_sebelum, $r);
 $r = anak(['--fungsi', 'rollback_tambah', (string) $pid1, (string) BAGAS]);
 cek('Q14c tambah kru: riwayat gagal -> kru tidak bertambah', str_starts_with($r, 'GAGAL_PDO:23503') && kru_db($pid1) === $kru_sebelum, $r);
-$r = anak(['--fungsi', 'rollback_lepas', (string) $pid1, (string) $id_nina]);
-cek('Q14d lepas kru: riwayat gagal -> kru tidak berkurang', str_starts_with($r, 'GAGAL_PDO:23503') && kru_db($pid1) === $kru_sebelum, $r);
+// Nina masih membawa barang Milik Kru (Q09), jadi sejak Sprint 3C lepas_kru() menolaknya di dalam transaksi sebelum riwayat
+// dicatat. Uji rollback memakai kru tambahan tanpa barang bawaan, lalu baris itu dihapus lagi.
+jalankan('INSERT INTO anggota_proyek (proyek_id, pengguna_id) VALUES (:p, :u)', ['p' => $pid1, 'u' => BAGAS]);
+$id_bagas = (int) satu('SELECT id FROM anggota_proyek WHERE proyek_id = :p AND pengguna_id = :u', ['p' => $pid1, 'u' => BAGAS]);
+$kru_q14 = kru_db($pid1);
+$r = anak(['--fungsi', 'rollback_lepas', (string) $pid1, (string) $id_bagas]);
+cek('Q14d lepas kru: riwayat gagal -> kru tidak berkurang', str_starts_with($r, 'GAGAL_PDO:23503') && kru_db($pid1) === $kru_q14, $r);
+jalankan('DELETE FROM anggota_proyek WHERE id = :i', ['i' => $id_bagas]);
 
 echo "\n== D. Deadline persiapan dan riwayat\n";
 // Q15 konfirmasi persiapan (session), lalu deadline diubah lebih awal (PostgreSQL)
@@ -547,7 +552,7 @@ cek('Q19 kolom Proyek di Manajemen Pengguna (PIC + kru) sama di dua browser dan 
 anak(['--sesi-lama', 'sesiLama']);
 $h = minta('sesiLama', SA, $L);
 $s = json_decode(anak(['--periksa-sesi', 'sesiLama', '11']), true);
-cek('Q20a session lama di-seed ulang (versi 4) tanpa salinan proyek/anggota', ($s['versi'] ?? 0) === 4 && !$s['ada_proyek'] && !$s['ada_anggota'] && bersih($h));
+cek('Q20a session lama di-seed ulang (versi terbaru) tanpa salinan proyek/anggota', ($s['versi'] ?? 0) >= 4 && !$s['ada_proyek'] && !$s['ada_anggota'] && bersih($h));
 cek('Q20b kebutuhan session yang merujuk proyek buatan session (#11) ikut dibuang', ($s['kebutuhan_proyek_11'] ?? -1) === 0 && !str_contains($h['html'], 'Proyek Buatan Session'));
 
 echo PHP_EOL . ($gagal ? "GAGAL: $gagal" : 'OK') . " ($lulus lulus, $gagal gagal)" . PHP_EOL;

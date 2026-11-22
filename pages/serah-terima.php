@@ -52,7 +52,7 @@ if (is_post()) {
                     continue;
                 }
                 $terlihat[$id] = true;
-                $a = db_cari('alokasi', $id);
+                $a = cari_alokasi($id);
                 if (!$a || (int) $a['proyek_id'] !== $pid_keluar) {
                     $masalah[] = 'Alokasi #' . $id . ' bukan milik proyek ' . $proyek['kode'] . '.';
                     continue;
@@ -164,7 +164,7 @@ if (is_post()) {
                     continue;
                 }
                 $terlihat[$id] = true;
-                $a = db_cari('alokasi', $id);
+                $a = cari_alokasi($id);
                 if (!$a || (int) $a['proyek_id'] !== $pid_kembali) {
                     $masalah[] = 'Alokasi #' . $id . ' bukan milik proyek ' . $proyek['kode'] . '.';
                     continue;
@@ -415,7 +415,7 @@ $ps = hitung_per_sumber($kelompok_serah['unit'], true);
 <div class="trx-isi">
 <ul class="unit-mini">
 <?php foreach ($trx['detail'] as $d): ?>
-<?php $a = db_cari('alokasi', $d['alokasi_id']); ?>
+<?php $a = cari_alokasi($d['alokasi_id']); ?>
 <li><span><?= e($a ? keterangan_sumber($a) . ' · ' . nama_barang_alokasi($a) : 'Alokasi dihapus') ?><?= jumlah_detail($d) > 1 ? ' × ' . jumlah_detail($d) : '' ?></span><?php if ($a && $a['sumber'] !== 'Studio'): ?> <span class="sumber sumber-<?= e(strtolower(str_replace(' ', '-', $a['sumber']))) ?>"><?= e($a['sumber']) ?></span><?php endif; ?> <?= badge($d['kondisi']) ?><?= !empty($d['trx_asal']) ? ' <span class="redup">asal ' . e(db_cari('transaksi', (int) $d['trx_asal'])['kode'] ?? '?') . '</span>' : '' ?></li>
 <?php endforeach; ?>
 </ul>

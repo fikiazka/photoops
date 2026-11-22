@@ -194,6 +194,8 @@ if ($isi_seed !== $seed_preset) {
 function bersihkan(): void
 {
     jalankan("DELETE FROM preset_perlengkapan WHERE nama ILIKE 'UJI3B%'");
+    // Sejak Sprint 3C "Isi dari preset" menulis kebutuhan ke PostgreSQL (proyek contoh); kebutuhan uji dihapus lagi.
+    jalankan("DELETE FROM kebutuhan_proyek WHERE nama LIKE 'UJI3B%'");
 }
 bersihkan();
 define('RIWAYAT_AWAL', (int) satu('SELECT COALESCE(MAX(id), 0) FROM riwayat_aktivitas'));
@@ -479,9 +481,9 @@ foreach (range(1, 10) as $pid) {
         break;
     }
 }
-$s = json_decode(anak(['--periksa-sesi', 'petugasB', (string) $proyek_isi]), true);
-cek('T12b "Isi dari preset" di browser B memakai item preset PostgreSQL (nama, kategori, jumlah disalin ke kebutuhan)',
-    $proyek_isi > 0 && in_array('UJI3B Model Kebutuhan A|2|3', $s['kebutuhan'] ?? [], true) && in_array('UJI3B Model Kebutuhan B|5|4', $s['kebutuhan'] ?? [], true),
+$isi_pg = array_column(semua("SELECT nama || '|' || kategori_id || '|' || jumlah AS x FROM kebutuhan_proyek WHERE proyek_id = :p", ['p' => $proyek_isi]), 'x');
+cek('T12b "Isi dari preset" di browser B menyalin item preset (nama, kategori, jumlah) ke kebutuhan proyek di PostgreSQL',
+    $proyek_isi > 0 && in_array('UJI3B Model Kebutuhan A|2|3', $isi_pg, true) && in_array('UJI3B Model Kebutuhan B|5|4', $isi_pg, true),
     'proyek #' . $proyek_isi);
 $h = minta('petugasB', PI, $D, ['id' => (string) $proyek_isi], ['aksi' => 'isi_preset', 'preset_id' => (string) $pk]);
 cek('T12c mengisi ulang dari preset yang sama melewati model yang sudah ada', str_contains($h['pesan'], '0 kebutuhan') && str_contains($h['pesan'], '2 dilewati'), $h['pesan']);
@@ -511,8 +513,8 @@ cek('T16a hapus item: baris hilang, riwayat tercatat', count(item_db($pid1)) ===
 $h = minta('admin', SA, $P, [], ['aksi' => 'hapus_preset', 'id' => (string) $pk]);
 cek('T16b hapus preset: preset dan semua itemnya terhapus (CASCADE), riwayat tercatat',
     preset_db('UJI3B Isi Kebutuhan') === null && item_db($pk) === [] && jumlah_riwayat('UJI3B Isi Kebutuhan', 'Preset dihapus') === 1);
-$s = json_decode(anak(['--periksa-sesi', 'petugasB', (string) $proyek_isi]), true);
-cek('T16c kebutuhan proyek yang dulu diisi dari preset itu tetap ada', count(array_filter($s['kebutuhan'] ?? [], fn ($x) => str_starts_with($x, 'UJI3B Model Kebutuhan'))) === 2);
+cek('T16c kebutuhan proyek yang dulu diisi dari preset itu tetap ada',
+    (int) satu("SELECT COUNT(*) FROM kebutuhan_proyek WHERE proyek_id = :p AND nama LIKE 'UJI3B Model Kebutuhan%'", ['p' => $proyek_isi]) === 2);
 
 // T17 session lama yang masih menyimpan salinan preset
 anak(['--sesi-lama', 'sesiLama']);

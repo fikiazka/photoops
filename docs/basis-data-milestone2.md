@@ -8,10 +8,10 @@ Dokumen ini adalah bahan untuk Bab 2.3, Bab 3 (bagian basis data), Bab 4 (bagian
 |---|---|
 | Skema 14 tabel, data contoh, role aplikasi `photoops_si3_app`, database `photoops_si3_dev` | Sudah dibuat dan diuji |
 | Uji struktur, relasi, constraint, kueri, dan pola transaksi bersamaan (di PostgreSQL) | Sudah dijalankan, hasil di Bab 4 |
-| Aplikasi PHP memakai PostgreSQL | **Sebagian (hybrid).** Sudah PostgreSQL: Login & Pengguna (Sprint Backend 1), Kategori & Inventaris Studio (Sprint Backend 2), Proyek & Anggota Proyek (Sprint Backend 3A), Preset & Item Preset (Sprint Backend 3B). Masih PHP Session: Kebutuhan, Alokasi, Persiapan, Serah Terima, Insiden. Riwayat: aksi Pengguna, Perlengkapan, Proyek, Tim, Preset di PostgreSQL, lainnya masih session |
-| Aturan yang dijaga aplikasi (bentrok jadwal unit, barang keluar sekali, kembali tidak melebihi keluar) | Pola transaksinya sudah diuji di PostgreSQL; **belum diuji end-to-end lewat PHP** (menunggu migrasi Alokasi dan Serah Terima) |
+| Aplikasi PHP memakai PostgreSQL | **Sebagian (hybrid).** Sudah PostgreSQL: Login & Pengguna (Sprint Backend 1), Kategori & Inventaris Studio (Sprint Backend 2), Proyek & Anggota Proyek (Sprint Backend 3A), Preset & Item Preset (Sprint Backend 3B), Kebutuhan & Alokasi termasuk catatan Rental (Sprint Backend 3C). Masih PHP Session: Persiapan (checklist dan konfirmasi), Serah Terima, Insiden. Riwayat: aksi Pengguna, Perlengkapan, Proyek, Tim, Preset, Kebutuhan, Alokasi, Rental di PostgreSQL, lainnya masih session |
+| Aturan yang dijaga aplikasi (bentrok jadwal unit, barang keluar sekali, kembali tidak melebihi keluar) | Bentrok jadwal unit: **dijaga PostgreSQL lewat PHP** sejak 3C (penguncian baris unit, diuji termasuk request bersamaan). Barang keluar/kembali: **belum** (menunggu migrasi Serah Terima) |
 
-Rincian integrasi Proyek & Anggota Proyek ada di bagian [Sprint Backend 3A](#sprint-backend-3a--proyek-dan-anggota-proyek), Preset di bagian [Sprint Backend 3B](#sprint-backend-3b--preset-perlengkapan-dan-item-preset).
+Rincian integrasi Proyek & Anggota Proyek ada di bagian [Sprint Backend 3A](#sprint-backend-3a--proyek-dan-anggota-proyek), Preset di bagian [Sprint Backend 3B](#sprint-backend-3b--preset-perlengkapan-dan-item-preset), Kebutuhan & Alokasi di bagian [Sprint Backend 3C](#sprint-backend-3c--kebutuhan-proyek-dan-alokasi-barang).
 
 File utama di `database/`: `001_schema.sql` (struktur), `002_seed_demo.sql` (data contoh), `004_query_photoops.sql` (7 kueri operasional). File pendukung di `database/pendukung/`: `000_setup.sql` (admin membuat role dan database, sekali), `003_hak_akses.sql` (hak akses role aplikasi, dijalankan setelah 001 dan 002), dan `005_uji_integritas.sql` (uji). Urutan pemasangan: 000 → 001 → 002 → 003.
 
@@ -662,7 +662,54 @@ Seed PostgreSQL dan seed session memakai preset 1–4 dan item 1–21 yang sama.
 ### Keterbatasan hybrid yang tersisa
 
 - Ketersediaan stok di halaman Preset bergantung pada alokasi di session browser yang sedang dipakai, dan belum memperhitungkan jadwal (Sprint 3C).
-- Kebutuhan hasil "Isi dari preset" masih tersimpan per browser sampai Kebutuhan dimigrasikan.
+- Kebutuhan hasil "Isi dari preset" masih tersimpan per browser sampai Kebutuhan dimigrasikan. *(Diselesaikan di Sprint 3C.)*
+
+## Sprint Backend 3C — Kebutuhan Proyek dan Alokasi Barang
+
+### Ruang lingkup
+
+Kebutuhan dan alokasi (Studio, Rental, Milik Kru) dibaca dan ditulis di PostgreSQL (`kebutuhan_proyek`, `alokasi_barang`, `riwayat_aktivitas`) lewat `data/logic_alokasi.php`. Kolom Rental pada `alokasi_barang` (`diterima_*`, `sewa_mulai`, `jatuh_tempo_vendor`, `kontak_vendor`, `dikembalikan_vendor_*`) ikut ditulis di PostgreSQL karena merupakan bagian baris alokasi; alur halaman Barang eksternal tidak diubah. Skema tidak diubah. Persiapan (checklist id alokasi dan konfirmasi) serta Serah Terima tetap di PHP Session dan merujuk id alokasi PostgreSQL.
+
+### Aturan dan penguncian
+
+| Aturan | Penerapan |
+|---|---|
+| Urutan kunci | Setiap perubahan kebutuhan/alokasi mengunci baris `proyek` (`FOR UPDATE`) lebih dulu, lalu baris `kebutuhan_proyek`, lalu (Studio) baris `perlengkapan`. Urutan yang sama di semua fungsi mencegah deadlock |
+| Tidak ada double booking unit | Alokasi Studio mengunci baris unit, lalu mencari alokasi lain unit itu yang bukan Dibatalkan dan jadwalnya bertabrakan (`tgl_mulai <= selesai AND tgl_selesai >= mulai`) atau sudah ada di proyek yang sama. Request kedua menunggu kunci, lalu melihat alokasi pertama dan ditolak. Bukan "SELECT lalu INSERT" tanpa kunci |
+| Jadwal alokasi | `tgl_mulai` = tanggal batas persiapan (atau mulai acara bila lebih awal), `tgl_selesai` = tanggal selesai acara, dihitung dari baris proyek yang sudah dikunci |
+| Unit layak | Unit harus Aktif, berkondisi Baik, dan sekategori dengan kebutuhannya (dicek ulang di transaksi) |
+| Tidak melebihi kebutuhan | Jumlah unit terisi (Studio = 1, Rental/Milik Kru = `jumlah`, alokasi Dibatalkan tidak dihitung) dihitung ulang setelah kebutuhan dikunci |
+| Milik Kru | Pemilik harus PIC atau kru proyek (dicek di transaksi). Kru yang masih membawa barang Milik Kru tidak bisa dilepas dari tim — kini berlaku untuk semua browser |
+| Kebutuhan | Jumlah 1–50, nama/acuan ≤ 60. Jumlah tidak bisa di bawah unit terisi; kategori tidak bisa diubah bila ada alokasi aktif atau serah terima; kebutuhan dengan alokasi aktif atau serah terima tidak bisa dihapus (alokasi Dibatalkan ikut terhapus lewat CASCADE) |
+| Isi dari preset | Item preset disalin dalam satu transaksi; baris preset dikunci `FOR SHARE` agar tidak terhapus di tengah proses |
+| Konfirmasi/batal/hapus alokasi | Alokasi yang sudah punya serah terima (session browser ini, atau `detail_transaksi` di PostgreSQL) atau Rental yang sudah diterima dari vendor dikunci |
+| Catatan Rental | `UPDATE ... WHERE` memuat syarat keadaan (misalnya `diterima_pada IS NULL`), sehingga penerimaan/pengembalian/perpanjangan dari dua browser tidak tercatat dua kali |
+| Riwayat | Aksi Kebutuhan, Alokasi, Rental ditulis ke `riwayat_aktivitas` dalam transaksi yang sama; bila gagal, seluruh perubahan di-ROLLBACK |
+
+**Perubahan perilaku:** pemeriksaan bentrok kini memperhitungkan semua alokasi unit yang bukan Dibatalkan, termasuk yang barangnya sudah kembali lebih awal. Status "sudah kembali" masih per browser (Serah Terima di session), sehingga tidak dipakai untuk membebaskan jadwal; hasilnya sama di semua browser.
+
+### Migrasi dari Session
+
+Seed PostgreSQL dan seed session memakai kebutuhan 1–28 dan alokasi 1–40 yang sama. Seed PostgreSQL punya tambahan kebutuhan #29 dan alokasi #41 (Milik Kru PRJ-025, keluar 2 kembali 1); seed session diselaraskan (centang persiapan #41, TRX-044/045, dan riwayatnya). `VERSI_DATA` dinaikkan menjadi 5: checklist persiapan dan serah terima di session menyimpan id alokasi, dan session lama bisa berisi alokasi buatan session (id 41 dst.) yang di PostgreSQL adalah alokasi lain, jadi setiap session di-seed ulang. Kebutuhan, alokasi, checklist, dan serah terima yang pernah dibuat di session sebelum 3C tidak terbawa.
+
+### Pengujian
+
+| Uji | Perintah | Hasil |
+|---|---|---|
+| Integrasi 3C (K01–K18, 90 pemeriksaan) | `PHOTOOPS_DB_NAME=photoops_si3_test php tests/uji_kebutuhan_alokasi.php` | 90 lulus, 0 gagal (dua kali berturut-turut) |
+| Regresi 3A | `PHOTOOPS_DB_NAME=photoops_si3_test php tests/uji_proyek.php` | 70 lulus, 0 gagal |
+| Regresi 3B | `PHOTOOPS_DB_NAME=photoops_si3_test php tests/uji_preset.php` | 75 lulus, 0 gagal |
+| Sintaks PHP | `php -l` semua berkas | 0 galat |
+| Regresi Inventaris | `PHOTOOPS_DB_NAME=photoops_si3_test php tests/uji_inventaris.php` | **Belum dijalankan** (database uji perlu dibuat ulang dari 001 + 002 + 003) |
+
+`uji_kebutuhan_alokasi.php` membuat dan menghapus sendiri proyek berawalan `UJI3C` (jadwal Januari–Februari 2027); kebutuhan 1–29 dan alokasi 1–41 contoh hanya dibaca setelah dicek masih sesuai seed. Cakupan: CRUD kebutuhan, isi dari preset, validasi, alokasi tiga sumber, bentrok jadwal, dua request bersamaan (unit yang sama dan sisa kebutuhan yang sama), konfirmasi/batal/hapus, catatan Rental, rollback tujuh operasi, hak akses, CSRF, lintas browser, lepas kru, persiapan → serah terima barang keluar, dashboard, dan session lama. Uji 3A dan 3B disesuaikan karena kebutuhan/alokasi tidak lagi di session.
+
+### Keterbatasan hybrid yang tersisa
+
+- **Serah Terima masih per browser.** Status "keluar/kembali" dan kunci "sudah tercatat di serah terima" hanya diketahui browser yang mencatatnya. Browser lain (yang persiapannya tidak dikonfirmasi di session-nya) masih bisa membatalkan atau menghapus alokasi yang secara fisik sudah keluar; di browser pencatat, baris serah terima itu lalu tampil "Alokasi dihapus". Penjaga yang ada: kunci untuk data serah terima di PostgreSQL (data contoh) dan bentrok jadwal yang tetap dicek di PostgreSQL. Selesai bila Serah Terima dimigrasikan (Sprint 4).
+- **Persiapan masih per browser.** Checklist dan konfirmasi persiapan, termasuk kunci "persiapan sudah dikonfirmasi" yang menahan perubahan kebutuhan/alokasi, hanya berlaku di browser yang mengonfirmasi. Perubahan alokasi dari browser lain tidak mencabut konfirmasi di browser itu sampai halamannya memuat ulang dan menghitung syarat.
+- **Status unit "Dipinjam" dan catatan "masih keluar di …"** di Inventaris/dialog alokasi berasal dari serah terima browser yang sedang dipakai.
+- Mengubah tanggal proyek tetap tidak memperbarui tanggal alokasi yang sudah ada.
 
 ---
 
