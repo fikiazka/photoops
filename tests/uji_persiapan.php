@@ -506,7 +506,7 @@ anak(['--sesi-lama', 'sesiPalsu', (string) $p3, (string) $a3]);
 $h = minta('sesiPalsu', SA, $S, [], form_keluar($p3, [$a3 => 1]));
 cek('P18a session lama yang mengklaim persiapan dikonfirmasi tidak bisa melewati gerbang', jumlah_keluar($a3) === 0 && str_contains($h['pesan'], 'belum bisa dicatat'), $h['pesan']);
 $s = json_decode(anak(['--periksa-sesi', 'sesiPalsu']), true);
-cek('P18b salinan persiapan dan log Persiapan di session lama dibuang (hanya insiden + log insiden)', ($s['kunci'] ?? []) === ['insiden', 'riwayat']
+cek('P18b salinan persiapan dan log Persiapan di session lama dibuang (sejak 4C tidak ada data bisnis di session)', ($s['kunci'] ?? ['x']) === []
     && !in_array('Persiapan', $s['riwayat_aksi'] ?? ['Persiapan'], true), json_encode($s));
 $h = minta('sesiPalsu', SA, $D, ['id' => (string) $p3, 'tab' => 'persiapan']);
 cek('P18c halaman menampilkan status PostgreSQL (belum dikonfirmasi, belum dicentang)', bersih($h) && !str_contains($h['html'], 'Persiapan Dikonfirmasi Selesai')

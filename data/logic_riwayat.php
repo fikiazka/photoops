@@ -1,24 +1,13 @@
 <?php
 defined('ROOT') || exit;
 
-// Log session untuk modul yang belum dimigrasikan (sejak Sprint 4B hanya Insiden).
-function catat_riwayat(string $aksi, string $objek, string $keterangan, string $lama = '', string $baru = ''): void
-{
-    db_tambah('riwayat', [
-        'waktu' => date('Y-m-d H:i', strtotime(sekarang())),
-        'pengguna_id' => $_SESSION['user_id'] ?? null,
-        'aksi' => $aksi,
-        'objek' => $objek,
-        'keterangan' => $keterangan,
-        'lama' => $lama,
-        'baru' => $baru,
-    ]);
-}
+// Sejak Sprint Backend 4C seluruh riwayat aktivitas ada di PostgreSQL (riwayat_aktivitas, hanya ditambah). Setiap log
+// ditulis di dalam transaksi yang sama dengan perubahan datanya, sehingga bila pencatatan gagal perubahannya ikut batal.
+// Waktu semua log memakai jam aplikasi sekarang() (tanggal demo HARI_INI + jam nyata), termasuk log Pengguna dan
+// Perlengkapan yang sebelumnya memakai tanggal nyata, agar urutan di halaman Riwayat memakai satu acuan waktu.
 
-// Audit Proyek dan Tim (Sprint Backend 3A), Kebutuhan, Alokasi, Rental (3C), Barang Keluar dan Pengembalian (4A), serta
-// Persiapan (4B) di PostgreSQL; dipanggil di dalam transaksi yang sama dengan perubahannya.
-// Waktunya memakai sekarang() (jam aplikasi), sama dengan log Insiden di session, karena log ini
-// ditampilkan berdampingan di halaman Riwayat.
+// Penulis log tunggal untuk semua aksi (Proyek, Tim, Preset, Kebutuhan, Alokasi, Rental, Barang Keluar, Pengembalian,
+// Persiapan, Insiden, Pengguna, Perlengkapan).
 function catat_riwayat_proyek(string $aksi, string $objek, string $keterangan, string $lama = '', string $baru = ''): void
 {
     sql_jalankan('INSERT INTO riwayat_aktivitas (waktu, pengguna_id, aksi, objek, keterangan, lama, baru)
@@ -33,34 +22,16 @@ function catat_riwayat_proyek(string $aksi, string $objek, string $keterangan, s
     ]);
 }
 
-// Audit Manajemen Pengguna disimpan di PostgreSQL (aksi 'Pengguna'), di dalam transaksi yang sama
-// dengan perubahan akunnya. Log modul operasional lain masih memakai catat_riwayat() (session).
+// Audit Manajemen Pengguna (aksi 'Pengguna'), di dalam transaksi yang sama dengan perubahan akunnya.
 function catat_riwayat_pengguna(string $objek, string $keterangan, string $lama = '', string $baru = ''): void
 {
-    sql_jalankan("INSERT INTO riwayat_aktivitas (waktu, pengguna_id, aksi, objek, keterangan, lama, baru)
-                  VALUES (:waktu, :pengguna_id, 'Pengguna', :objek, :keterangan, :lama, :baru)", [
-        'waktu' => date('Y-m-d H:i:s'),
-        'pengguna_id' => $_SESSION['user_id'] ?? null,
-        'objek' => $objek,
-        'keterangan' => $keterangan,
-        'lama' => $lama,
-        'baru' => $baru,
-    ]);
+    catat_riwayat_proyek('Pengguna', $objek, $keterangan, $lama, $baru);
 }
 
-// Audit Inventaris Studio (aksi 'Perlengkapan') juga di PostgreSQL, dipanggil di dalam transaksi
-// yang sama dengan INSERT/UPDATE unitnya. Bila pencatatan gagal, perubahan unit ikut dibatalkan (ROLLBACK).
+// Audit Inventaris Studio (aksi 'Perlengkapan'), di dalam transaksi yang sama dengan INSERT/UPDATE unitnya.
 function catat_riwayat_perlengkapan(string $objek, string $keterangan, string $lama = '', string $baru = ''): void
 {
-    sql_jalankan("INSERT INTO riwayat_aktivitas (waktu, pengguna_id, aksi, objek, keterangan, lama, baru)
-                  VALUES (:waktu, :pengguna_id, 'Perlengkapan', :objek, :keterangan, :lama, :baru)", [
-        'waktu' => date('Y-m-d H:i:s'),
-        'pengguna_id' => $_SESSION['user_id'] ?? null,
-        'objek' => $objek,
-        'keterangan' => $keterangan,
-        'lama' => $lama,
-        'baru' => $baru,
-    ]);
+    catat_riwayat_proyek('Perlengkapan', $objek, $keterangan, $lama, $baru);
 }
 
 // Audit Preset (Sprint Backend 3B), di dalam transaksi yang sama dengan perubahan preset/itemnya.
@@ -69,24 +40,15 @@ function catat_riwayat_preset(string $objek, string $keterangan, string $lama = 
     catat_riwayat_proyek('Preset', $objek, $keterangan, $lama, $baru);
 }
 
-// Aksi riwayat yang sumbernya PostgreSQL. Sisanya (Insiden) masih dari log session sampai Insiden dimigrasikan.
-const AKSI_RIWAYAT_DB = ['Pengguna', 'Perlengkapan', 'Proyek', 'Tim', 'Preset', 'Kebutuhan', 'Alokasi', 'Rental', 'Barang Keluar', 'Pengembalian', 'Persiapan'];
-
-// Halaman Riwayat: log session (selain AKSI_RIWAYAT_DB) digabung dengan audit dari PostgreSQL.
-// Tabel riwayat_aktivitas juga berisi data contoh aksi lain (Alokasi, Insiden, ...) yang sama dengan log session;
-// karena itu yang diambil dari database hanya AKSI_RIWAYAT_DB agar tidak tampil ganda.
-// ID baris PostgreSQL dibuat negatif agar tidak bertabrakan dengan ID log session.
+// Halaman Riwayat: seluruh log dari riwayat_aktivitas (satu sumber, tidak ada penggabungan dengan session sehingga tidak
+// ada log ganda). Urut waktu terbaru; bila waktunya sama, id yang lebih besar (dicatat lebih akhir) di atas.
 function daftar_riwayat(): array
 {
-    $baris = array_values(array_filter(db('riwayat'), fn ($r) => !in_array($r['aksi'], AKSI_RIWAYAT_DB, true)));
-    $audit = sql_semua("SELECT id, TO_CHAR(waktu, 'YYYY-MM-DD HH24:MI') AS waktu, pengguna_id, aksi, objek, keterangan, lama, baru
-                        FROM riwayat_aktivitas
-                        WHERE aksi IN (" . implode(', ', array_fill(0, count(AKSI_RIWAYAT_DB), '?')) . ')', AKSI_RIWAYAT_DB);
-    foreach ($audit as $r) {
-        $r['id'] = -(int) $r['id'];
-        $baris[] = $r;
+    $baris = sql_semua("SELECT id, TO_CHAR(waktu, 'YYYY-MM-DD HH24:MI') AS waktu, pengguna_id, aksi, objek, keterangan, lama, baru
+                        FROM riwayat_aktivitas ORDER BY waktu DESC, id DESC");
+    foreach ($baris as $i => $r) {
+        $baris[$i]['id'] = (int) $r['id'];
     }
-    usort($baris, fn ($a, $b) => strcmp($b['waktu'], $a['waktu']) ?: $b['id'] <=> $a['id']);
     return $baris;
 }
 
@@ -187,7 +149,7 @@ function deadline_saat_konfirmasi(array $konteks, array $proyek, int $id_log): a
 
 function info_persiapan_riwayat(): array
 {
-    // Keterangan tambahan per id entri log Persiapan (id negatif, sama dengan daftar_riwayat()):
+    // Keterangan tambahan per id entri log Persiapan (id riwayat_aktivitas, sama dengan daftar_riwayat()):
     //  - 'konfirmasi': deadline saat itu, waktu konfirmasi, Tepat Waktu/Terlambat (+selisih), dan pembatalan sesudahnya bila ada;
     //  - 'batal'     : konfirmasi tidak berlaku lagi (otomatis) atau dibuka ulang (manual);
     //  - 'progres'   : simpan checklist "x dari y barang diperiksa", BUKAN persiapan selesai (tanpa status akhir).
@@ -198,7 +160,7 @@ function info_persiapan_riwayat(): array
     $konfirmasi_terbuka = [];
     foreach ($log as $r) {
         $id_db = (int) $r['id'];
-        $id = -$id_db;
+        $id = $id_db;
         $kode = kode_proyek_objek($r['objek']);
         $proyek = $konteks['per_kode'][$kode] ?? null;
         $kunci = $proyek ? 'p' . $proyek['id'] : 'k' . $kode;

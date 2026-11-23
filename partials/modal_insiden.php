@@ -36,9 +36,10 @@ foreach (urutkan_proyek(array_values(semua_proyek())) as $p) {
 </div>
 <div class="bidang">
 <label for="insiden-proyek">Terjadi di proyek <span class="redup">(opsional)</span></label>
-<select id="insiden-proyek" name="proyek_id">
+<select id="insiden-proyek" name="proyek_id"<?= attr_galat('proyek_id') ?>>
 <?= opsi($opsi_proyek_insiden, lama('proyek_id'), 'Tidak terkait proyek') ?>
 </select>
+<?= pesan_galat('proyek_id') ?>
 </div>
 <div class="bidang">
 <label for="insiden-deskripsi">Deskripsi</label>

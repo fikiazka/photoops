@@ -8,10 +8,10 @@ Dokumen ini adalah bahan untuk Bab 2.3, Bab 3 (bagian basis data), Bab 4 (bagian
 |---|---|
 | Skema 14 tabel, data contoh, role aplikasi `photoops_si3_app`, database `photoops_si3_dev` | Sudah dibuat dan diuji |
 | Uji struktur, relasi, constraint, kueri, dan pola transaksi bersamaan (di PostgreSQL) | Sudah dijalankan, hasil di Bab 4 |
-| Aplikasi PHP memakai PostgreSQL | **Sebagian (hybrid).** Sudah PostgreSQL: Login & Pengguna (Sprint Backend 1), Kategori & Inventaris Studio (Sprint Backend 2), Proyek & Anggota Proyek (Sprint Backend 3A), Preset & Item Preset (Sprint Backend 3B), Kebutuhan & Alokasi termasuk catatan Rental (Sprint Backend 3C), Serah Terima barang keluar/kembali (Sprint Backend 4A), Persiapan H-1 (Sprint Backend 4B). Masih PHP Session: Insiden. Riwayat: semua aksi di PostgreSQL kecuali Insiden. Session lainnya hanya untuk login, CSRF, flash, dan form |
+| Aplikasi PHP memakai PostgreSQL | **Seluruhnya.** Login & Pengguna (Sprint Backend 1), Kategori & Inventaris Studio (2), Proyek & Anggota Proyek (3A), Preset & Item Preset (3B), Kebutuhan & Alokasi termasuk catatan Rental (3C), Serah Terima (4A), Persiapan H-1 (4B), Laporan Insiden dan seluruh Riwayat Aktivitas (4C). PHP Session hanya untuk login, CSRF, flash, isian form sesaat, dan sandi sementara |
 | Aturan yang dijaga aplikasi (bentrok jadwal unit, barang keluar sekali, kembali tidak melebihi keluar) | **Dijaga PostgreSQL lewat PHP**: bentrok jadwal unit sejak 3C; barang keluar sekali per alokasi, satu unit fisik tidak keluar di dua proyek, dan kembali tidak melebihi keluar sejak 4A (penguncian baris, diuji termasuk request bersamaan) |
 
-Rincian integrasi Proyek & Anggota Proyek ada di bagian [Sprint Backend 3A](#sprint-backend-3a--proyek-dan-anggota-proyek), Preset di bagian [Sprint Backend 3B](#sprint-backend-3b--preset-perlengkapan-dan-item-preset), Kebutuhan & Alokasi di bagian [Sprint Backend 3C](#sprint-backend-3c--kebutuhan-proyek-dan-alokasi-barang), Serah Terima di bagian [Sprint Backend 4A](#sprint-backend-4a--serah-terima-barang), Persiapan di bagian [Sprint Backend 4B](#sprint-backend-4b--persiapan-h-1).
+Rincian integrasi Proyek & Anggota Proyek ada di bagian [Sprint Backend 3A](#sprint-backend-3a--proyek-dan-anggota-proyek), Preset di bagian [Sprint Backend 3B](#sprint-backend-3b--preset-perlengkapan-dan-item-preset), Kebutuhan & Alokasi di bagian [Sprint Backend 3C](#sprint-backend-3c--kebutuhan-proyek-dan-alokasi-barang), Serah Terima di bagian [Sprint Backend 4A](#sprint-backend-4a--serah-terima-barang), Persiapan di bagian [Sprint Backend 4B](#sprint-backend-4b--persiapan-h-1), Insiden & Riwayat di bagian [Sprint Backend 4C](#sprint-backend-4c--insiden-riwayat-final-dan-pembersihan-session).
 
 File utama di `database/`: `001_schema.sql` (struktur), `002_seed_demo.sql` (data contoh), `004_query_photoops.sql` (7 kueri operasional). File pendukung di `database/pendukung/`: `000_setup.sql` (admin membuat role dan database, sekali), `003_hak_akses.sql` (hak akses role aplikasi, dijalankan setelah 001 dan 002), dan `005_uji_integritas.sql` (uji). Urutan pemasangan: 000 → 001 → 002 → 003.
 
@@ -802,9 +802,63 @@ Seed PostgreSQL sudah berisi checklist yang sama dengan seed session, plus konfi
 
 ### Keterbatasan yang tersisa
 
-- **Insiden masih di PHP Session** (laporan insiden dan log aksi Insiden): per browser, kode INS dapat sama di dua browser. Tabel `laporan_insiden` dan `seq_kode_insiden` sudah tersedia untuk Sprint 4C.
+- **Insiden masih di PHP Session** (laporan insiden dan log aksi Insiden): per browser, kode INS dapat sama di dua browser. Tabel `laporan_insiden` dan `seq_kode_insiden` sudah tersedia untuk Sprint 4C. *(Diselesaikan di Sprint 4C.)*
 - Pencabutan otomatis konfirmasi akibat perubahan di luar Persiapan (Inventaris, Rental) dijalankan sesudah request yang mengubah data; sampai saat itu gerbang Barang Keluar tetap menilai syarat langsung dan menolak bila tidak terpenuhi.
 - Mengubah tanggal proyek tetap tidak memperbarui tanggal alokasi yang sudah ada.
+
+## Sprint Backend 4C — Insiden, Riwayat Final, dan Pembersihan Session
+
+### Ruang lingkup
+
+Laporan insiden (manual dan otomatis dari pengembalian) dan seluruh riwayat aktivitas dibaca dan ditulis di PostgreSQL (`laporan_insiden`, `seq_kode_insiden`, `riwayat_aktivitas`) lewat `data/logic_insiden.php` dan `data/logic_riwayat.php`. Skema dan hak akses tidak diubah. Setelah sprint ini **tidak ada data bisnis di PHP Session**.
+
+### Aturan
+
+| Aturan | Penerapan |
+|---|---|
+| Kode insiden | `nextval('seq_kode_insiden')` → `INS-013`, dst. (aman untuk request bersamaan, bukan MAX + 1) |
+| Laporan manual | Unit wajib (angka, ada di Inventaris); jenis Rusak/Masalah Teknis; kondisi unit menjadi Maintenance/Rusak; proyek opsional tetapi bila diisi harus ada; deskripsi 5–300 karakter. Laporan, kondisi unit, dan riwayat dalam satu transaksi |
+| Insiden otomatis | Pengembalian unit Studio berkondisi Rusak → jenis Rusak; Maintenance → jenis Masalah Teknis. Insiden menunjuk `detail_transaksi` pengembaliannya (`detail_id` UNIQUE). Kondisi Baik, Rental, dan Milik Kru tidak membuat insiden. Transaksi pengembalian, kondisi unit, insiden, dan riwayat **satu transaksi**: bila INSERT insiden gagal, pengembalian ikut ROLLBACK (diuji) |
+| Insiden ganda | Pengembalian yang sama tidak bisa tercatat dua kali (saldo dicek di dalam kunci, 4A), jadi insidennya juga tidak ganda; `detail_id` UNIQUE sebagai pengaman terakhir |
+| Status | Dilaporkan → Ditangani (hanya dari Dilaporkan); Selesai (dari Dilaporkan atau Ditangani). Transisi dicek di dalam transaksi setelah unit lalu insiden dikunci; dua perubahan bersamaan berjalan bergantian |
+| Kondisi saat Selesai | Aturan yang sudah berlaku di aplikasi (tertulis di dialog "Tandai selesai"): bila tidak ada insiden lain yang masih terbuka untuk unit itu, kondisi unit kembali Baik. Bila masih ada, kondisi **tidak** diubah dan unit tetap tidak bisa dialokasikan |
+| Hak akses | Lapor dan ubah status: Super Admin dan Petugas Inventaris (`insiden.kelola`); halaman Inventaris tidak untuk User/Kru. Semua POST memakai CSRF |
+| Urutan kunci | Unit → laporan insiden. Pengembalian mengunci proyek → alokasi → unit lalu hanya menambah baris insiden, jadi tidak ada siklus kunci |
+
+Tidak ada kolom "catatan tindak lanjut" di skema maupun fitur di aplikasi, jadi tidak ditambahkan.
+
+### Riwayat final
+
+- `daftar_riwayat()` membaca **seluruh** `riwayat_aktivitas` (satu sumber; penggabungan dengan log session dihapus, sehingga tidak ada log ganda).
+- Semua log ditulis di transaksi yang sama dengan perubahan datanya (`catat_riwayat_proyek()`; `catat_riwayat_pengguna/perlengkapan/preset()` kini memanggilnya).
+- **Acuan waktu tunggal:** log Pengguna dan Perlengkapan sebelumnya memakai tanggal nyata, log lain memakai jam aplikasi `sekarang()` (tanggal demo `HARI_INI` + jam nyata), sehingga urutan di halaman Riwayat bercampur. Sejak 4C semua log memakai `sekarang()`. Urutan: waktu terbaru, lalu id terbesar. `HARI_INI` tidak diubah.
+
+### Pembersihan session
+
+| Data / fungsi | Keputusan |
+|---|---|
+| `user_id`, `csrf`, `flash`, `_form`, `_sandi_sementara` | Dipertahankan (login, keamanan, state sesaat) |
+| `$_SESSION['db']` (insiden, log Insiden) dan `db_versi` | Dihapus; sisa di session browser lama dibuang di bootstrap |
+| `data/seed.php`, `seed_data()`, `VERSI_DATA` | Dihapus (tidak ada data bisnis yang perlu di-seed ke session) |
+| `db()`, `db_cari()`, `db_tambah()`, `db_ubah()` | Dihapus (tidak ada pemanggil) |
+| `catat_riwayat()` (log session), `AKSI_RIWAYAT_DB` | Dihapus |
+| `proses_session_dan_inventaris()` | Diganti `transaksi_inventaris()` (transaksi PostgreSQL murni) |
+
+### Pengujian dan database uji
+
+`tests/uji_insiden.php` (I01–I20, 53 pemeriksaan): 53 lulus, 0 gagal. Regresi 3A, 3B, 3C, 4A, 4B lulus seluruhnya. `tests/cek_koneksi_db.php` lulus. `tests/uji_inventaris.php` **belum dijalankan**: database uji di server aplikasi (localhost:5432) belum berhasil dibangun ulang (diverifikasi lewat jumlah data dan OID database yang tidak berubah).
+
+Database uji dibangun ulang dengan `database/pendukung/reset_db_uji.sql` (superuser; nama `photoops_si3_test` ditulis langsung dan dicek ulang dengan `current_database()` sebelum skema dimuat):
+
+```
+psql -h localhost -p 5432 -U postgres -d postgres -v ON_ERROR_STOP=1 -f database/pendukung/reset_db_uji.sql
+```
+
+Urutan regresi yang disarankan setelah reset: `uji_inventaris.php` lebih dulu (mensyaratkan 23 unit seed), lalu suite lain (masing-masing membersihkan atau mengarsipkan data ujinya sendiri).
+
+### Bug prioritas untuk Final Backend Stabilization: jadwal ulang proyek vs tanggal alokasi
+
+**Masih ada (direproduksi di database uji).** `ubah_proyek()` (`data/logic_proyek.php`) hanya mengubah baris `proyek`; `tgl_mulai`/`tgl_selesai` alokasi dihitung sekali di `tambah_alokasi()` (`data/logic_alokasi.php`, lewat `rentang_alokasi()`), dan `bentrok_unit_db()` serta `cek_unit_untuk_proyek()` membandingkan tanggal alokasi tersebut. Reproduksi: proyek A (10 Sep) memakai CAM-001 → A dijadwal ulang ke 20 Sep → alokasi A tetap 9–10 Sep → CAM-001 berhasil dialokasikan juga ke proyek B (20 Sep). Risiko: satu unit fisik dipesan dua proyek pada hari yang sama tanpa peringatan. Solusi minimal yang disarankan: di dalam transaksi `ubah_proyek()` (baris proyek sudah dikunci), bila rentang alokasi berubah, kunci unit Studio alokasi aktif proyek itu, cek `bentrok_unit_db()` terhadap rentang baru, lalu perbarui `tgl_mulai`/`tgl_selesai` alokasi yang belum keluar; tolak perubahan jadwal bila ada bentrok (atau minta alokasinya dibatalkan dulu).
 
 ---
 

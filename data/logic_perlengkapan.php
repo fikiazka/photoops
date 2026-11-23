@@ -57,19 +57,15 @@ function inventaris_berubah(?bool $atur = null): bool
     return $berubah;
 }
 
-// Proses modul Session (insiden, pengembalian) yang juga mengubah kondisi unit di PostgreSQL.
-// Session dan PostgreSQL tidak bisa digabung dalam satu transaksi database, jadi dibuat "semua atau tidak sama sekali":
-//   1. salin $_SESSION['db'] sebagai cadangan;
-//   2. jalankan $kerja di dalam sql_transaksi(): UPDATE kondisi unit baru permanen saat COMMIT di akhir;
-//   3. bila ada error (database gagal di tengah proses), PostgreSQL di-ROLLBACK dan session dikembalikan ke cadangan.
-// Dengan begitu tidak ada keadaan setengah jadi, misalnya transaksi pengembalian tercatat tetapi kondisi unit belum berubah.
-function proses_session_dan_inventaris(callable $kerja)
+// Transaksi PostgreSQL untuk proses yang mengubah kondisi unit (insiden, pengembalian, penanganan insiden).
+// Bila gagal, semua perubahan di-ROLLBACK dan tanda inventaris_berubah() dihapus agar sinkron persiapan tidak berjalan
+// dari data yang dibatalkan.
+function transaksi_inventaris(callable $kerja)
 {
-    $cadangan = $_SESSION['db'];
     try {
         return sql_transaksi($kerja);
     } catch (Throwable $e) {
-        $_SESSION['db'] = $cadangan;
+        semua_perlengkapan(true);
         inventaris_berubah(false);
         throw $e;
     }
@@ -127,7 +123,7 @@ function ubah_unit(int $id, array $isi): bool
     return $berhasil;
 }
 
-// Ubah kondisi unit dari alur Insiden/Pengembalian (modul Session). Riwayatnya dicatat modul pemanggil
+// Ubah kondisi unit dari alur Insiden/Pengembalian (dipanggil di dalam transaksi pemanggil). Riwayatnya dicatat pemanggil
 // sebagai aksi 'Insiden', jadi di sini tidak dicatat lagi agar tidak tampil ganda.
 function ubah_kondisi_unit(int $id, string $kondisi): void
 {
@@ -405,48 +401,6 @@ function validasi_unit(array $data): array
     return $galat;
 }
 
-function daftar_insiden(): array
-{
-    $baris = array_values(db('insiden'));
-    usort($baris, fn ($a, $b) => strcmp($b['waktu'], $a['waktu']));
-    return $baris;
-}
-
-function insiden_terbuka(): array
-{
-    return array_values(array_filter(daftar_insiden(), fn ($i) => $i['status'] !== 'Selesai'));
-}
-
-function kode_insiden_baru(): string
-{
-    $maks = 0;
-    foreach (db('insiden') as $insiden) {
-        $maks = max($maks, (int) substr($insiden['kode'], 4));
-    }
-    return 'INS-' . str_pad((string) ($maks + 1), 3, '0', STR_PAD_LEFT);
-}
-
-function lapor_insiden(int $unit_id, ?int $proyek_id, string $jenis, string $deskripsi, string $kondisi_baru): string
-{
-    $unit = cari_perlengkapan($unit_id);
-    $kode = kode_insiden_baru();
-    // Kondisi unit ada di PostgreSQL dan diubah lebih dulu: bila database gagal, catatan insiden di session belum dibuat.
-    if ($unit && $unit['kondisi'] !== $kondisi_baru) {
-        ubah_kondisi_unit($unit_id, $kondisi_baru);
-    }
-    db_tambah('insiden', [
-        'kode' => $kode,
-        'perlengkapan_id' => $unit_id,
-        'proyek_id' => $proyek_id,
-        'jenis' => $jenis,
-        'waktu' => date('Y-m-d H:i', strtotime(sekarang())),
-        'deskripsi' => $deskripsi,
-        'status' => 'Dilaporkan',
-        'pelapor_id' => $_SESSION['user_id'] ?? null,
-    ]);
-    catat_riwayat('Insiden', label_unit($unit), $kode . ' · ' . $deskripsi, $unit['kondisi'] ?? '', $kondisi_baru);
-    return $kode;
-}
 
 function daftar_barang_eksternal(): array
 {

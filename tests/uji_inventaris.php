@@ -149,7 +149,7 @@ if (($argv[1] ?? '') === '--fungsi') {
         // pemulihan session), jadi kedua varian memakai jalur itu.
         $_SESSION['user_id'] = 2;
         $trx_awal = count(semua_transaksi());
-        $insiden_awal = count(db('insiden'));
+        $insiden_awal = count(semua_insiden());
         $proyek = cari_proyek(7);
         $item = [
             ['alokasi' => cari_alokasi(25), 'per_kondisi' => ['Baik' => 0, 'Maintenance' => 0, 'Rusak' => 1]],
@@ -162,7 +162,7 @@ if (($argv[1] ?? '') === '--fungsi') {
             $galat = $e->getCode();
         }
         echo json_encode(['galat' => $galat, 'trx_bertambah' => count(semua_transaksi(true)) - $trx_awal,
-            'insiden_bertambah' => count(db('insiden')) - $insiden_awal, 'tanda_berubah' => inventaris_berubah()]);
+            'insiden_bertambah' => count(semua_insiden(true)) - $insiden_awal, 'tanda_berubah' => inventaris_berubah()]);
     } elseif ($jenis === 'riwayat') {
         $per_aksi = [];
         foreach (daftar_riwayat() as $r) {
