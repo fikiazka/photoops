@@ -160,12 +160,9 @@ const LABEL_RELASI_PENGGUNA = [
     'insiden' => 'Laporan insiden', 'riwayat' => 'Riwayat aktivitas',
 ];
 
-// KEBIJAKAN SEMENTARA (sistem hybrid): hapus permanen DITOLAK untuk semua akun.
-// Proyek, Anggota Tim, dan modul operasional lain masih disimpan di PHP Session per browser. Penugasan akun
-// yang dibuat di browser lain tidak terlihat dari server, dan tabel pengguna tidak mencatat kapan akun dibuat
-// atau pernah masuk. Jadi "akun belum pernah dipakai" tidak bisa dibuktikan; gunakan Nonaktifkan Akun.
-// Ubah ke true hanya setelah modul operasional dimigrasikan ke PostgreSQL, ketika relasi_pengguna()
-// dan FOREIGN KEY sudah melihat seluruh pemakaian akun.
+// Kebijakan: hapus permanen akun belum diaktifkan; akun yang tidak dipakai lagi dinonaktifkan sehingga riwayatnya tetap utuh.
+// Sejak Sprint 4C seluruh pemakaian akun ada di PostgreSQL, jadi relasi_pengguna() dan FOREIGN KEY (tanpa CASCADE) sudah
+// melihat semuanya; hapus_pengguna_db() siap dipakai bila tim memutuskan mengubah konstanta ini menjadi true.
 const HAPUS_PERMANEN_TERSEDIA = false;
 
 // Hasil: [status, daftar relasi]. Status: ok | belum_terverifikasi | dipakai | super_admin_terakhir | sudah_berubah.

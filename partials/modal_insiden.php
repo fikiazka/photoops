@@ -47,3 +47,15 @@ foreach (urutkan_proyek(array_values(semua_proyek())) as $p) {
 <?= pesan_galat('deskripsi') ?>
 </div>
 <?= dialog_tutup('Kirim laporan', 'btn btn-bahaya') ?>
+
+<?= dialog_buka('dialog-selesai-insiden', 'Selesaikan insiden', 'Unit studio') ?>
+<input type="hidden" name="aksi" value="selesaikan_insiden">
+<input type="hidden" name="id" value="">
+<div class="bidang">
+<label for="selesai-insiden-kondisi">Kondisi akhir unit</label>
+<select id="selesai-insiden-kondisi" name="kondisi_akhir" data-bawaan="" required aria-required="true">
+<?= opsi(['Baik' => 'Baik — sudah diperbaiki/diperiksa, layak pakai', 'Maintenance' => 'Maintenance — masih perlu servis', 'Rusak' => 'Rusak — tidak layak pakai'], '', 'Pilih kondisi akhir unit') ?>
+</select>
+<p class="petunjuk">Wajib dipilih. Menyelesaikan insiden hanya menutup laporannya; pilih kondisi fisik unit saat ini. Hanya unit berkondisi Baik yang bisa dialokasikan. Bila unit masih punya insiden lain yang terbuka, kondisinya tidak diubah (tidak bisa menjadi Baik).</p>
+</div>
+<?= dialog_tutup('Tandai selesai') ?>

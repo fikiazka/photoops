@@ -26,7 +26,7 @@ $label_np = ['Persiapan Dikonfirmasi Selesai' => 'Dikonfirmasi', 'Siap untuk Dik
 <span class="daftar-judul"><?= e($p['kode']) ?> · <?= e($p['nama']) ?></span>
 <span class="progres">
 <?= bilah($prs['persen'], $prs['lewat'] ? 'merah' : ($prs['status'] === 'Siap' ? 'hijau' : 'tinta')) ?>
-<span class="kecil"><?= $prs['selesai'] ?>/<?= $prs['total'] ?> diperiksa</span>
+<span class="kecil"><?= $prs['selesai'] ?>/<?= $prs['total'] ?> diperiksa<?= $p['status'] !== 'Dijadwalkan' ? ' · ' . e($p['status']) : '' ?></span>
 </span>
 </span>
 <?php if ($gerak['unit']): ?>

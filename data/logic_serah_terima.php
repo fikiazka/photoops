@@ -64,7 +64,7 @@ function semua_detail_transaksi(bool $muat_ulang = false): array
     return $daftar;
 }
 
-// Sesudah serah terima berubah: baca ulang, dan tandai agar bootstrap menyinkronkan konfirmasi persiapan (session).
+// Sesudah serah terima berubah: baca ulang, dan tandai agar bootstrap menyinkronkan konfirmasi persiapan.
 function muat_ulang_serah(): void
 {
     semua_transaksi(true);
@@ -239,22 +239,6 @@ function teks_per_sumber(array $per_sumber): string
         }
     }
     return implode(', ', $bagian);
-}
-
-function unit_belum_kembali(?int $proyek_id = null): array
-{
-    $hasil = [];
-    foreach (semua_alokasi() as $alokasi) {
-        if ($alokasi['sumber'] !== 'Studio' || !sedang_keluar($alokasi)) {
-            continue;
-        }
-        if ($proyek_id !== null && (int) $alokasi['proyek_id'] !== $proyek_id) {
-            continue;
-        }
-        $hasil[] = ['alokasi' => $alokasi, 'unit' => cari_perlengkapan((int) $alokasi['perlengkapan_id']), 'keluar' => serah_alokasi($alokasi['id'])['keluar']];
-    }
-    usort($hasil, fn ($a, $b) => strcmp($a['alokasi']['tgl_selesai'], $b['alokasi']['tgl_selesai']));
-    return $hasil;
 }
 
 function barang_di_luar(?int $proyek_id = null): array
@@ -590,31 +574,5 @@ function daftar_transaksi(?int $proyek_id = null): array
         $hasil[] = $trx;
     }
     usort($hasil, fn ($a, $b) => strcmp($b['waktu'], $a['waktu']));
-    return $hasil;
-}
-
-function tren_mingguan(int $minggu = 6): array
-{
-    $senin = date('Y-m-d', strtotime('monday this week', strtotime(HARI_INI)));
-    $hasil = [];
-    for ($i = $minggu - 1; $i >= 0; $i--) {
-        $awal = date('Y-m-d', strtotime($senin . ' -' . ($i * 7) . ' days'));
-        $akhir = date('Y-m-d', strtotime($awal . ' +6 days'));
-        $hasil[$awal] = ['label' => tgl($awal, 'singkat'), 'akhir' => $akhir, 'Keluar' => 0, 'Kembali' => 0];
-    }
-    $transaksi = semua_transaksi();
-    foreach (semua_detail_transaksi() as $detail) {
-        $trx = $transaksi[$detail['transaksi_id']] ?? null;
-        if (!$trx) {
-            continue;
-        }
-        $tanggal = substr($trx['waktu'], 0, 10);
-        foreach ($hasil as $awal => $baris) {
-            if ($tanggal >= $awal && $tanggal <= $baris['akhir']) {
-                $hasil[$awal][$trx['jenis']] += jumlah_detail($detail);
-                break;
-            }
-        }
-    }
     return $hasil;
 }

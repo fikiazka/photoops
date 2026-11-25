@@ -10,12 +10,22 @@ $akan_datang = array_values(array_filter($proyek_saya, fn ($p) => proyek_aktif($
 $berikut = $akan_datang[0] ?? null;
 $lalu = array_values(array_filter($proyek_saya, fn ($p) => !in_array($p, $akan_datang, true)));
 
+// Barang pribadi pengguna ini (alokasi Milik Kru): proyek aktif, atau proyek tertutup yang barangnya belum dicatat kembali.
 $bawaan = [];
 foreach (semua_alokasi() as $a) {
     if ($a['sumber'] === 'Milik Kru' && (int) $a['pemilik_id'] === (int) $pengguna['id'] && $a['status'] !== 'Dibatalkan') {
         $p = cari_proyek($a['proyek_id']);
-        if ($p && proyek_aktif($p)) {
-            $bawaan[] = ['alokasi' => $a, 'proyek' => $p];
+        $serah = serah_alokasi((int) $a['id']);
+        $di_proyek = isset($serah['keluar']) && ($serah['sisa'] ?? 0) > 0;
+        if ($p && (proyek_aktif($p) || $di_proyek)) {
+            if ($di_proyek) {
+                $posisi = ['Sedang Keluar', ($serah['jumlah_kembali'] ?? 0) > 0 ? 'Sisa ' . $serah['sisa'] . ' di proyek' : 'Di proyek'];
+            } elseif (isset($serah['kembali'])) {
+                $posisi = ['Sudah Kembali', 'Sudah kembali'];
+            } else {
+                $posisi = $a['status'] === 'Dikonfirmasi' ? ['Dijadwalkan', 'Belum diserahkan'] : [$a['status'], $a['status']];
+            }
+            $bawaan[] = ['alokasi' => $a, 'proyek' => $p, 'posisi' => $posisi];
         }
     }
 }
@@ -50,7 +60,7 @@ judul_halaman('Halo, ' . nama_depan($pengguna['nama']), tgl(HARI_INI, 'panjang')
 <?= bilah($prs['persen'], $prs['lewat'] ? 'merah' : ($prs['status'] === 'Siap' ? 'hijau' : 'tinta')) ?>
 <span><strong><?= $prs['selesai'] ?></strong> dari <?= $prs['total'] ?> diperiksa</span>
 </div>
-<p class="kecil redup"><?= $prs['status'] === 'Siap' ? 'Semua barang sudah dicek petugas.' : 'Petugas Inventaris masih menyiapkan barang. Batas ' . e(tgl($berikut['deadline_persiapan'], 'singkat_jam')) . '.' ?></p>
+<p class="kecil <?= $prs['lewat'] ? 'teks-merah' : 'redup' ?>"><?= e(teks_kesiapan_user($berikut, $prs)) ?></p>
 </div>
 <a href="<?= e(url('pages/proyek-detail.php?id=' . $berikut['id'])) ?>" class="btn btn-sekunder"><span>Lihat detail proyek</span><?= ikon('chevron-right', 16) ?></a>
 </div>
@@ -73,7 +83,7 @@ judul_halaman('Halo, ' . nama_depan($pengguna['nama']), tgl(HARI_INI, 'panjang')
 <span class="tanggal-blok"><span><?= e(date('j', strtotime($p['mulai']))) ?></span><span><?= e(nama_bulan((int) date('n', strtotime($p['mulai'])), true)) ?></span></span>
 <span class="daftar-utama">
 <span class="daftar-judul"><?= e($p['nama']) ?></span>
-<span class="daftar-sub"><?= e($p['kode']) ?> · <?= e($p['lokasi']) ?> · <?= e(tgl($p['mulai'], 'jam')) ?> WIB</span>
+<span class="daftar-sub"><?= e($p['kode']) ?> · <?= e($p['lokasi']) ?> · <?= e(tgl($p['mulai'], 'jam')) ?> WIB · <?= e($p['status']) ?></span>
 </span>
 <?= badge(peran_di_proyek($p['id'], $pengguna['id'])) ?>
 </a>
@@ -96,9 +106,9 @@ judul_halaman('Halo, ' . nama_depan($pengguna['nama']), tgl(HARI_INI, 'panjang')
 <span class="ikon-bulat ikon-biru"><?= ikon('user', 16) ?></span>
 <div class="daftar-utama">
 <p class="daftar-judul"><?= e($b['alokasi']['nama_barang']) ?></p>
-<p class="daftar-sub"><?= e($b['proyek']['kode']) ?> · <?= e(rentang_tgl($b['alokasi']['tgl_mulai'], $b['alokasi']['tgl_selesai'])) ?></p>
+<p class="daftar-sub"><?= e($b['proyek']['kode']) ?> · <?= e(rentang_tgl($b['alokasi']['tgl_mulai'], $b['alokasi']['tgl_selesai'])) ?><?= jumlah_alokasi($b['alokasi']) > 1 ? ' · ' . jumlah_alokasi($b['alokasi']) . ' unit' : '' ?></p>
 </div>
-<?= badge($b['alokasi']['status']) ?>
+<?= badge($b['posisi'][0], $b['posisi'][1]) ?>
 </li>
 <?php endforeach; ?>
 </ul>

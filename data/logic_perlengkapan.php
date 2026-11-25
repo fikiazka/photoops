@@ -2,8 +2,8 @@
 defined('ROOT') || exit;
 
 // Inventaris Studio (kategori dan unit) dibaca dan ditulis di PostgreSQL: tabel kategori_perlengkapan dan perlengkapan.
-// Modul yang masih memakai PHP Session (persiapan, insiden) membaca unit lewat
-// semua_perlengkapan() / cari_perlengkapan(), sehingga hanya ada satu sumber data inventaris.
+// Modul lain (alokasi, persiapan, serah terima, insiden) membaca unit lewat semua_perlengkapan() / cari_perlengkapan(),
+// sehingga hanya ada satu sumber data inventaris.
 
 // Semua kategori, ber-key id. Dibaca sekali per request lalu disimpan sementara.
 function semua_kategori(): array
@@ -96,12 +96,30 @@ function tambah_unit(int $kategori_id, array $isi): ?string
 
 // Ubah data unit. Kategori dan kode unit tidak ikut diubah (aturan aplikasi).
 // SELECT ... FOR UPDATE membaca kondisi/status terbaru sebagai nilai "lama" di riwayat. Hasil: false bila unit tidak ada.
-function ubah_unit(int $id, array $isi): bool
+// Kode insiden yang masih terbuka (Dilaporkan/Ditangani) untuk unit ini. Dipanggil di dalam transaksi SESUDAH baris unit
+// dikunci: semua jalur yang menambah atau menutup insiden (lapor_insiden, ubah_status_insiden) mengunci baris unit lebih dulu,
+// sehingga hasilnya tidak bisa berubah sampai COMMIT.
+function insiden_terbuka_unit(int $unit_id): array
 {
-    $berhasil = sql_transaksi(function () use ($id, $isi) {
+    return array_column(sql_semua("SELECT kode FROM laporan_insiden WHERE perlengkapan_id = :u AND status <> 'Selesai' ORDER BY id",
+        ['u' => $unit_id]), 'kode');
+}
+
+// Hasil: ['status' => ok | tidak_ada | insiden_terbuka, 'insiden' => kode insiden terbuka].
+// Kondisi tidak boleh diubah MENJADI Baik selama unit masih punya insiden terbuka (selesaikan insidennya dengan kondisi akhir
+// Baik). Perubahan data lain, atau kondisi yang memang sudah Baik, tetap boleh.
+function ubah_unit(int $id, array $isi): array
+{
+    $hasil = sql_transaksi(function () use ($id, $isi) {
         $lama = sql_satu('SELECT kode_unit, kondisi, status_aktif FROM perlengkapan WHERE id = :id FOR UPDATE', ['id' => $id]);
         if (!$lama) {
-            return false;
+            return ['status' => 'tidak_ada'];
+        }
+        if ($isi['kondisi'] === 'Baik' && $lama['kondisi'] !== 'Baik') {
+            $terbuka = insiden_terbuka_unit($id);
+            if ($terbuka) {
+                return ['status' => 'insiden_terbuka', 'insiden' => $terbuka];
+            }
         }
         sql_jalankan('UPDATE perlengkapan
                       SET nama = :nama, merek = :merek, kondisi = :kondisi, status_aktif = :status_aktif, catatan = :catatan
@@ -114,19 +132,24 @@ function ubah_unit(int $id, array $isi): bool
         } else {
             catat_riwayat_perlengkapan($label, 'Data unit diperbarui');
         }
-        return true;
+        return ['status' => 'ok'];
     });
-    if ($berhasil) {
+    if ($hasil['status'] === 'ok') {
         semua_perlengkapan(true);
         inventaris_berubah(true);
     }
-    return $berhasil;
+    return $hasil;
 }
 
 // Ubah kondisi unit dari alur Insiden/Pengembalian (dipanggil di dalam transaksi pemanggil). Riwayatnya dicatat pemanggil
 // sebagai aksi 'Insiden', jadi di sini tidak dicatat lagi agar tidak tampil ganda.
+// Dipanggil di dalam transaksi insiden SESUDAH baris unit dikunci. Pengaman terakhir: kondisi tidak pernah menjadi Baik selama
+// masih ada insiden terbuka untuk unit itu (pengecualian membatalkan seluruh transaksi pemanggil).
 function ubah_kondisi_unit(int $id, string $kondisi): void
 {
+    if ($kondisi === 'Baik' && insiden_terbuka_unit($id)) {
+        throw new LogicException('Kondisi unit #' . $id . ' tidak boleh menjadi Baik selama masih ada insiden terbuka.');
+    }
     sql_jalankan('UPDATE perlengkapan SET kondisi = :kondisi WHERE id = :id', ['kondisi' => $kondisi, 'id' => $id]);
     semua_perlengkapan(true);
     inventaris_berubah(true);
@@ -290,8 +313,8 @@ function cek_unit_untuk_proyek(array $unit, array $proyek): array
     if ($unit['kondisi'] !== 'Baik') {
         return ['blokir' => 'Kondisi ' . $unit['kondisi'], 'catatan' => ''];
     }
-    // Aturan blokir sama dengan bentrok_unit_db() yang dicek ulang di dalam transaksi tambah_alokasi(): semua alokasi unit
-    // ini selain Dibatalkan (PostgreSQL), termasuk yang barangnya sudah kembali: jadwal (reservasi) tidak dicampur dengan status fisik.
+    // Aturan blokir sama dengan bentrok_unit_db() yang dicek ulang di dalam transaksi tambah_alokasi(): reservasi unit ini di
+    // proyek aktif (alokasi selain Dibatalkan), termasuk yang barangnya sudah kembali: jadwal (reservasi) tidak dicampur dengan status fisik.
     [$mulai, $selesai] = rentang_alokasi($proyek);
     foreach (jadwal_unit($unit['id']) as $alokasi) {
         if ($alokasi['proyek_id'] === (int) $proyek['id']) {
@@ -310,10 +333,12 @@ function cek_unit_untuk_proyek(array $unit, array $proyek): array
     return ['blokir' => '', 'catatan' => $catatan];
 }
 
-// Semua alokasi unit Studio selain Dibatalkan, urut tanggal mulai (dasar pemeriksaan bentrok jadwal).
+// Reservasi unit Studio (alokasi selain Dibatalkan milik proyek yang masih aktif), urut tanggal mulai. Sama dengan
+// bentrok_unit_db(): reservasi proyek Selesai/Dibatalkan tidak memblokir jadwal.
 function jadwal_unit(int $unit_id): array
 {
-    $hasil = array_values(array_filter(semua_alokasi(), fn ($a) => $a['sumber'] === 'Studio' && $a['perlengkapan_id'] === $unit_id && $a['status'] !== 'Dibatalkan'));
+    $hasil = array_values(array_filter(semua_alokasi(), fn ($a) => $a['sumber'] === 'Studio' && $a['perlengkapan_id'] === $unit_id && $a['status'] !== 'Dibatalkan'
+        && proyek_aktif(cari_proyek($a['proyek_id']) ?? ['status' => 'Dibatalkan'])));
     usort($hasil, fn ($a, $b) => strcmp($a['tgl_mulai'], $b['tgl_mulai']));
     return $hasil;
 }
@@ -339,35 +364,11 @@ function stok_model(): array
     return $hasil;
 }
 
-function frekuensi_pakai(): array
-{
-    $hasil = array_fill_keys(array_keys(semua_perlengkapan()), 0);
-    foreach (semua_alokasi() as $alokasi) {
-        if ($alokasi['sumber'] === 'Studio' && $alokasi['status'] !== 'Dibatalkan' && isset($hasil[$alokasi['perlengkapan_id']])) {
-            $hasil[$alokasi['perlengkapan_id']]++;
-        }
-    }
-    return $hasil;
-}
-
 function ringkasan_pemakaian(): array
 {
     $hasil = ['Tersedia' => 0, 'Dipinjam' => 0, 'Tidak Tersedia' => 0];
     foreach (semua_perlengkapan() as $unit) {
         $hasil[status_pemakaian($unit)]++;
-    }
-    return $hasil;
-}
-
-function pemakaian_per_kategori(): array
-{
-    $hasil = [];
-    foreach (semua_kategori() as $kategori) {
-        $hasil[$kategori['id']] = ['nama' => $kategori['nama'], 'Tersedia' => 0, 'Dipinjam' => 0, 'Tidak Tersedia' => 0, 'total' => 0];
-    }
-    foreach (semua_perlengkapan() as $unit) {
-        $hasil[$unit['kategori_id']][status_pemakaian($unit)]++;
-        $hasil[$unit['kategori_id']]['total']++;
     }
     return $hasil;
 }
@@ -400,7 +401,6 @@ function validasi_unit(array $data): array
     }
     return $galat;
 }
-
 
 function daftar_barang_eksternal(): array
 {

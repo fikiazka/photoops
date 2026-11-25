@@ -5,10 +5,10 @@ defined('ROOT') || exit;
 // Kebutuhan proyek dan alokasi barang (Sprint Backend 3C) di PostgreSQL: tabel kebutuhan_proyek dan alokasi_barang.
 //   - Baris alokasi dibaca bersama proyek_id kebutuhannya (JOIN), sehingga kode lama yang memakai $alokasi['proyek_id'] tetap jalan.
 //   - Kolom Rental (diterima_*, sewa_mulai, jatuh_tempo_vendor, kontak_vendor, dikembalikan_vendor_*) ikut di baris alokasi.
-//   - Checklist persiapan (id alokasi yang dicentang) masih di PHP Session; serah terima (Sprint 4A) di PostgreSQL. Keduanya merujuk id alokasi ini.
-//   - Penguncian: setiap perubahan mengunci baris proyek (FOR UPDATE) lebih dulu, sehingga perubahan kebutuhan/alokasi/tim
+//   - Checklist persiapan ada di kolom alokasi_barang.diperiksa (Sprint 4B); serah terima (Sprint 4A) merujuk id alokasi ini.
+//   - Penguncian: setiap perubahan mengunci baris proyek (FOR UPDATE) lebih dulu, sehingga perubahan kebutuhan/alokasi/tim/jadwal
 //     pada proyek yang sama berjalan bergantian. Alokasi Studio juga mengunci baris unit (perlengkapan) sehingga dua proyek
-//     tidak bisa memesan unit yang sama pada jadwal yang bertabrakan, walaupun dikirim bersamaan.
+//     tidak bisa memesan unit yang sama pada jadwal yang bertabrakan, walaupun dikirim bersamaan (termasuk saat jadwal digeser).
 // ---------------------------------------------------------------------------------------------
 
 const KOLOM_ALOKASI = "a.id, k.proyek_id, a.kebutuhan_id, a.sumber, a.perlengkapan_id, a.nama_barang, a.vendor, a.pemilik_id, a.jumlah,
@@ -81,7 +81,7 @@ function cari_alokasi($id): ?array
 }
 
 // Sesudah kebutuhan/alokasi berubah: baca ulang, dan tandai agar bootstrap menyinkronkan konfirmasi persiapan
-// (checklist persiapan masih di session dan bergantung pada alokasi).
+// (syarat persiapan bergantung pada alokasi).
 function muat_ulang_alokasi(): void
 {
     semua_kebutuhan(true);
@@ -266,13 +266,18 @@ function isi_kebutuhan_dari_preset(int $proyek_id, int $preset_id): array
 // ---------------------------------------------------------------------------------------------
 
 // Alokasi aktif (selain Dibatalkan) lain yang memakai unit ini dan bertabrakan jadwal, atau sudah ada di proyek yang sama.
+// Reservasi milik proyek Selesai/Dibatalkan tidak memblokir (barangnya yang masih keluar tetap terlihat lewat serah terima);
+// bila proyek itu dibuka kembali, bentroknya dicek ulang oleh sinkron_jadwal_alokasi().
+// $termasuk_proyek_sama = false: hanya alokasi proyek lain (dipakai saat jadwal proyek sendiri digeser atau dibuka kembali).
 // Dipanggil di dalam transaksi SESUDAH baris unit dikunci, jadi hasilnya tidak bisa didahului request lain.
-function bentrok_unit_db(int $unit_id, int $proyek_id, string $mulai, string $selesai): ?array
+function bentrok_unit_db(int $unit_id, int $proyek_id, string $mulai, string $selesai, bool $termasuk_proyek_sama = true): ?array
 {
+    $syarat = $termasuk_proyek_sama
+        ? '(k.proyek_id = :proyek_a OR (a.tgl_mulai <= :selesai AND a.tgl_selesai >= :mulai))'
+        : '(k.proyek_id <> :proyek_a AND a.tgl_mulai <= :selesai AND a.tgl_selesai >= :mulai)';
     $baris = sql_satu("SELECT a.id, k.proyek_id, TO_CHAR(a.tgl_mulai, 'YYYY-MM-DD') AS tgl_mulai, TO_CHAR(a.tgl_selesai, 'YYYY-MM-DD') AS tgl_selesai
-                       FROM alokasi_barang a JOIN kebutuhan_proyek k ON k.id = a.kebutuhan_id
-                       WHERE a.perlengkapan_id = :unit AND a.status <> 'Dibatalkan'
-                         AND (k.proyek_id = :proyek_a OR (a.tgl_mulai <= :selesai AND a.tgl_selesai >= :mulai))
+                       FROM alokasi_barang a JOIN kebutuhan_proyek k ON k.id = a.kebutuhan_id JOIN proyek pr ON pr.id = k.proyek_id
+                       WHERE a.perlengkapan_id = :unit AND a.status <> 'Dibatalkan' AND pr.status NOT IN ('Selesai', 'Dibatalkan') AND $syarat
                        ORDER BY CASE WHEN k.proyek_id = :proyek_b THEN 0 ELSE 1 END, a.tgl_mulai
                        LIMIT 1", ['unit' => $unit_id, 'proyek_a' => $proyek_id, 'selesai' => $selesai, 'mulai' => $mulai, 'proyek_b' => $proyek_id]);
     if (!$baris) {
@@ -281,6 +286,70 @@ function bentrok_unit_db(int $unit_id, int $proyek_id, string $mulai, string $se
     $baris['proyek_id'] = (int) $baris['proyek_id'];
     $baris['proyek_sama'] = $baris['proyek_id'] === $proyek_id;
     return $baris;
+}
+
+// Jadwal atau status proyek diubah: rentang reservasi alokasi aktif (rentang_alokasi) ikut digeser, dan unit Studio-nya dicek
+// bentrok bila proyek (tetap/kembali) aktif. Dipanggil di dalam transaksi ubah_proyek() SESUDAH baris proyek dikunci dan SEBELUM
+// proyek di-UPDATE. Urutan kunci sama dengan tambah_alokasi(): proyek -> alokasi -> unit (urut id), jadi perubahan jadwal dan
+// alokasi baru untuk unit yang sama berjalan bergantian dan yang kedua melihat hasil yang pertama.
+//   - Alokasi yang sudah punya serah terima tidak digeser: perubahan rentang ditolak agar reservasi tetap sesuai transaksinya.
+//   - Proyek yang dibuka kembali (Selesai/Dibatalkan -> aktif) dicek bentrok walau rentangnya tetap, karena reservasi proyek
+//     tertutup tidak memblokir unit dan bisa sudah dipakai proyek lain.
+// Hasil: ['status' => ok | jadwal_terkunci | bentrok, 'jumlah' => alokasi yang digeser, 'keluar' => n, 'bentrok' => [...],
+// 'rentang_lama' => [mulai, selesai], 'rentang_baru' => [mulai, selesai]].
+function sinkron_jadwal_alokasi(int $proyek_id, array $lama, array $baru): array
+{
+    $dibuka = !proyek_aktif($lama) && proyek_aktif($baru);
+    $hasil = ['status' => 'ok', 'jumlah' => 0, 'dibuka' => $dibuka, 'rentang_lama' => rentang_alokasi($lama), 'rentang_baru' => rentang_alokasi($baru)];
+    [$mulai, $selesai] = $hasil['rentang_baru'];
+    $geser = $hasil['rentang_lama'] !== $hasil['rentang_baru'];
+    if (!$geser && !$dibuka) {
+        return $hasil;
+    }
+    $aktif = sql_semua("SELECT a.id FROM alokasi_barang a JOIN kebutuhan_proyek k ON k.id = a.kebutuhan_id
+                        WHERE k.proyek_id = :p AND a.status <> 'Dibatalkan' ORDER BY a.id FOR UPDATE OF a", ['p' => $proyek_id]);
+    if (!$aktif) {
+        return $hasil;
+    }
+    $keluar = (int) sql_satu("SELECT COUNT(DISTINCT d.alokasi_id) AS n FROM detail_transaksi d
+                              JOIN alokasi_barang a ON a.id = d.alokasi_id JOIN kebutuhan_proyek k ON k.id = a.kebutuhan_id
+                              WHERE k.proyek_id = :p AND a.status <> 'Dibatalkan'", ['p' => $proyek_id])['n'];
+    if ($geser && $keluar > 0) {
+        return ['status' => 'jadwal_terkunci', 'keluar' => $keluar] + $hasil;
+    }
+    if (!proyek_aktif($baru)) {
+        $hasil['jumlah'] = geser_jadwal_alokasi($proyek_id, $mulai, $selesai);
+        return $hasil;
+    }
+    $unit = [];
+    foreach (sql_semua("SELECT p.id, p.kode_unit FROM perlengkapan p
+                        WHERE p.id IN (SELECT a.perlengkapan_id FROM alokasi_barang a JOIN kebutuhan_proyek k ON k.id = a.kebutuhan_id
+                                       WHERE k.proyek_id = :p AND a.status <> 'Dibatalkan' AND a.sumber = 'Studio')
+                        ORDER BY p.id FOR UPDATE", ['p' => $proyek_id]) as $u) {
+        $unit[(int) $u['id']] = $u['kode_unit'];
+    }
+    $bentrok = [];
+    foreach ($unit as $unit_id => $kode_unit) {
+        $b = bentrok_unit_db($unit_id, $proyek_id, $mulai, $selesai, false);
+        if ($b) {
+            $bentrok[] = ['kode_unit' => $kode_unit] + $b;
+        }
+    }
+    if ($bentrok) {
+        return ['status' => 'bentrok', 'bentrok' => $bentrok] + $hasil;
+    }
+    if ($geser) {
+        $hasil['jumlah'] = geser_jadwal_alokasi($proyek_id, $mulai, $selesai);
+    }
+    return $hasil;
+}
+
+// UPDATE rentang alokasi aktif proyek (baris sudah dikunci oleh sinkron_jadwal_alokasi). Hasil: jumlah baris yang digeser.
+function geser_jadwal_alokasi(int $proyek_id, string $mulai, string $selesai): int
+{
+    return sql_jalankan("UPDATE alokasi_barang a SET tgl_mulai = :mulai, tgl_selesai = :selesai FROM kebutuhan_proyek k
+                         WHERE k.id = a.kebutuhan_id AND k.proyek_id = :p AND a.status <> 'Dibatalkan'",
+        ['mulai' => $mulai, 'selesai' => $selesai, 'p' => $proyek_id])->rowCount();
 }
 
 // Alokasi baru. $isi: sumber, perlengkapan_id, nama_barang, vendor, pemilik_id, jumlah, status, catatan (sudah divalidasi form).

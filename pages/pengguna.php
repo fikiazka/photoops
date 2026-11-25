@@ -117,7 +117,7 @@ if (is_post()) {
                 if ($hasil === 'ok') {
                     flash('sukses', 'Akun ' . $target['nama'] . ' dihapus permanen.');
                 } elseif ($hasil === 'belum_terverifikasi') {
-                    flash('error', 'Akun tidak dapat dihapus karena memiliki riwayat penggunaan atau status penggunaannya belum dapat diverifikasi. Silakan nonaktifkan akun.');
+                    flash('error', 'Hapus permanen akun belum diaktifkan agar riwayat penggunaannya tetap utuh. Silakan nonaktifkan akun.');
                 } elseif ($hasil === 'dipakai') {
                     flash('error', 'Akun ' . $target['nama'] . ' tidak bisa dihapus karena sudah dipakai di: ' . implode(', ', $relasi)
                         . '. Nonaktifkan akun agar tidak bisa masuk; datanya tetap tersimpan.');
@@ -229,7 +229,7 @@ Kata sandi sementara untuk <strong>@<?= e($sandi_sementara['username']) ?></stro
 <?= tombol_konfirmasi(['label' => 'Reset kata sandi ' . $p['nama'], 'ikon' => 'key-round', 'hanya_ikon' => true, 'aksi' => 'reset_sandi', 'id' => $p['id'], 'judul' => 'Reset kata sandi?', 'pesan' => 'Kata sandi lama ' . $p['nama'] . ' langsung tidak berlaku. Kata sandi sementara baru dibuat acak dan hanya ditampilkan sekali.', 'tombol' => 'Reset kata sandi', 'aman' => true]) ?>
 <?= tombol_konfirmasi(['label' => ($p['status'] === 'Aktif' ? 'Nonaktifkan ' : 'Aktifkan ') . $p['nama'], 'ikon' => 'power', 'hanya_ikon' => true, 'aksi' => 'ubah_status', 'id' => $p['id'], 'judul' => $p['status'] === 'Aktif' ? 'Nonaktifkan akun?' : 'Aktifkan akun?', 'pesan' => $p['status'] === 'Aktif' ? $p['nama'] . ' tidak bisa masuk sampai diaktifkan lagi. Datanya di proyek tetap tersimpan.' : $p['nama'] . ' bisa masuk kembali.', 'tombol' => $p['status'] === 'Aktif' ? 'Nonaktifkan' : 'Aktifkan', 'aman' => $p['status'] !== 'Aktif']) ?>
 <?php if (!HAPUS_PERMANEN_TERSEDIA): ?>
-<button type="button" class="tombol-ikon tombol-ikon-kecil" aria-disabled="true" aria-label="Hapus <?= e($p['nama']) ?> tidak tersedia. Pemakaian akun belum dapat diverifikasi; nonaktifkan akun." title="Hapus permanen belum tersedia: pemakaian akun di Proyek dan Tim belum dapat diverifikasi. Gunakan Nonaktifkan akun."><?= ikon('trash-2', 16) ?></button>
+<button type="button" class="tombol-ikon tombol-ikon-kecil" aria-disabled="true" aria-label="Hapus <?= e($p['nama']) ?> tidak tersedia; nonaktifkan akun." title="Hapus permanen akun belum diaktifkan agar riwayatnya tetap utuh. Gunakan Nonaktifkan akun."><?= ikon('trash-2', 16) ?></button>
 <?php else: ?>
 <?= tombol_konfirmasi(['label' => 'Hapus ' . $p['nama'], 'ikon' => 'trash-2', 'hanya_ikon' => true, 'aksi' => 'hapus_pengguna', 'id' => $p['id'], 'judul' => 'Hapus akun permanen?', 'pesan' => 'Akun ' . $p['nama'] . ' (@' . $p['username'] . ') dihapus permanen dan tidak bisa dikembalikan. Akun yang sudah dipakai di proyek, serah terima, insiden, atau riwayat akan ditolak — nonaktifkan saja.', 'tombol' => 'Hapus permanen']) ?>
 <?php endif; ?>
