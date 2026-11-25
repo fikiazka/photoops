@@ -105,7 +105,19 @@ if (($argv[1] ?? '') === '--fungsi') {
             $h = catat_insiden_manual((int) $arg[0], null, 'Masalah Teknis', 'UJI4C laporan bersamaan', 'Maintenance');
             echo json_encode(['status' => 'ok', 'kode' => $h['kode'] ?? '']);
         } elseif ($jenis === 'status') {
-            echo json_encode(['status' => ubah_status_insiden((int) $arg[0], $arg[1])['status']]);
+            echo json_encode(['status' => ubah_status_insiden((int) $arg[0], $arg[1], $arg[2] ?? '')['status']]);
+        } elseif ($jenis === 'ubah_baik') {
+            // Ubah Unit ke Baik (data lain tetap), seperti form Ubah unit.
+            $u = cari_perlengkapan((int) $arg[0]);
+            echo json_encode(['status' => ubah_unit($u['id'], ['nama' => $u['nama'], 'merek' => $u['merek'], 'kondisi' => 'Baik', 'status_aktif' => $u['status_aktif'], 'catatan' => $u['catatan']])['status']]);
+        } elseif ($jenis === 'lapor_baik') {
+            // Jalur yang tidak dipakai aplikasi: laporan insiden yang meminta kondisi Baik. Pengaman ubah_kondisi_unit() harus membatalkan semuanya.
+            try {
+                catat_insiden_manual((int) $arg[0], null, 'Rusak', 'UJI4C lapor dengan kondisi Baik', 'Baik');
+                echo json_encode(['status' => 'TANPA_GALAT']);
+            } catch (LogicException $e) {
+                echo json_encode(['status' => 'DITOLAK_PENGAMAN']);
+            }
         } elseif ($jenis === 'kembali') {
             $a = cari_alokasi((int) $arg[1]);
             $h = catat_pengembalian(cari_proyek((int) $arg[0]), [['alokasi' => $a, 'per_kondisi' => ['Baik' => 0, 'Maintenance' => 0, 'Rusak' => 1]]], null, $kini, 'UJI4C pengembalian bersamaan');
@@ -113,7 +125,7 @@ if (($argv[1] ?? '') === '--fungsi') {
         } elseif ($jenis === 'rb_status') {
             // Pengguna sesi 99999 tidak ada: INSERT riwayat (langkah terakhir) melanggar FOREIGN KEY -> ROLLBACK.
             $_SESSION['user_id'] = 99999;
-            ubah_status_insiden((int) $arg[0], $arg[1]);
+            ubah_status_insiden((int) $arg[0], $arg[1], $arg[2] ?? '');
             echo json_encode(['status' => 'TANPA_GALAT']);
         }
     } catch (PDOException $e) {
@@ -319,10 +331,15 @@ function form_insiden(array $ubah = []): array
     return $ubah + ['aksi' => 'lapor_insiden', 'perlengkapan_id' => '', 'jenis' => 'Masalah Teknis', 'kondisi' => 'Maintenance', 'proyek_id' => '', 'deskripsi' => 'UJI4C laporan manual'];
 }
 
-function status_insiden(string $sid, int $user, int $id, string $aksi, $csrf = true): array
+// "Selesaikan" mengirim kondisi akhir unit yang dipilih petugas (bawaan dialog: Baik); null = field tidak dikirim.
+function status_insiden(string $sid, int $user, int $id, string $aksi, $csrf = true, ?string $kondisi_akhir = 'Baik'): array
 {
     global $P;
-    return minta($sid, $user, $P, ['tab' => 'insiden'], ['aksi' => $aksi, 'id' => (string) $id], $csrf);
+    $post = ['aksi' => $aksi, 'id' => (string) $id];
+    if ($aksi === 'selesaikan_insiden' && $kondisi_akhir !== null) {
+        $post['kondisi_akhir'] = $kondisi_akhir;
+    }
+    return minta($sid, $user, $P, ['tab' => 'insiden'], $post, $csrf);
 }
 
 echo "Database uji: {$k['dbname']}\n\n== Persiapan data uji\n";
@@ -457,7 +474,7 @@ cek('I10a Dilaporkan -> Ditangani dari browser lain + riwayat', satu('SELECT sta
 $h = status_insiden('admin', SA, $id6, 'tangani_insiden');
 cek('I11a menandai ditangani dua kali ditolak', str_contains($h['pesan'], 'sudah berstatus Ditangani') && riwayat_insiden($i6['kode'] . ' mulai ditangani') === 1, $h['pesan']);
 $h = status_insiden('admin', SA, $id6, 'selesaikan_insiden');
-cek('I10b Ditangani -> Selesai; tidak ada insiden lain untuk unit itu, kondisi kembali Baik (aturan aplikasi) + riwayat', satu('SELECT status FROM laporan_insiden WHERE id = :i', ['i' => $id6]) === 'Selesai'
+cek('I10b Ditangani -> Selesai dengan kondisi akhir Baik; tidak ada insiden lain untuk unit itu, unit Baik + riwayat', satu('SELECT status FROM laporan_insiden WHERE id = :i', ['i' => $id6]) === 'Selesai'
     && kondisi($U1['id']) === 'Baik' && riwayat_insiden($i6['kode'] . ' selesai, unit kembali layak pakai', 'Rusak', 'Baik') === 1, $h['pesan']);
 $h1 = status_insiden('admin', SA, $id6, 'selesaikan_insiden');
 $h2 = status_insiden('admin', SA, $id6, 'tangani_insiden');
@@ -483,7 +500,7 @@ $h = minta('admin', SA, $D, ['id' => (string) $p3], ['aksi' => 'tambah_alokasi',
     'nama_barang' => '', 'vendor' => '', 'pemilik_id' => '', 'jumlah' => '1', 'status' => 'Dikonfirmasi', 'catatan' => '']);
 cek('I14c unit yang masih Rusak (insiden lain terbuka) tidak bisa dialokasikan', (int) satu('SELECT COUNT(*) FROM alokasi_barang WHERE kebutuhan_id = :k', ['k' => $kb]) === 0
     && str_contains($h['galat'], 'Kondisi Rusak'), $h['galat']);
-$r = fungsi('rb_status', [(int) $i14['id'], 'selesaikan']);
+$r = fungsi('rb_status', [(int) $i14['id'], 'selesaikan', 'Baik']);
 cek('I16 status Selesai: riwayat gagal -> status dan kondisi unit tidak berubah', str_starts_with($r['status'] ?? '', 'GAGAL_PDO:23503')
     && satu('SELECT status FROM laporan_insiden WHERE id = :i', ['i' => $i14['id']]) === 'Dilaporkan' && kondisi($U2['id']) === 'Rusak', $r['status'] ?? '');
 [$x, $y] = paralel(['--fungsi', 'status', (string) $i14['id'], 'tangani'], ['--fungsi', 'status', (string) $i14['id'], 'tangani']);
@@ -491,13 +508,91 @@ $st = [$x['status'] ?? '?', $y['status'] ?? '?'];
 sort($st);
 cek('I17a dua "tangani" bersamaan -> satu berhasil, satu ditolak; riwayat tidak ganda', $st === ['ok', 'transisi_tidak_sah']
     && riwayat_insiden($i14['kode'] . ' mulai ditangani') === 1, json_encode([$x, $y]));
-[$x, $y] = paralel(['--fungsi', 'status', (string) $i14['id'], 'selesaikan'], ['--fungsi', 'status', (string) $i14['id'], 'selesaikan']);
+[$x, $y] = paralel(['--fungsi', 'status', (string) $i14['id'], 'selesaikan', 'Baik'], ['--fungsi', 'status', (string) $i14['id'], 'selesaikan', 'Baik']);
 $st = [$x['status'] ?? '?', $y['status'] ?? '?'];
 sort($st);
 cek('I17b dua "selesaikan" bersamaan -> satu berhasil, unit Baik, riwayat Selesai satu kali', $st === ['ok', 'transisi_tidak_sah'] && kondisi($U2['id']) === 'Baik'
     && riwayat_insiden($i14['kode'] . ' selesai%') === 1, json_encode([$x, $y]));
 $h = status_insiden('admin', SA, (int) $i2['id'], 'selesaikan_insiden');
 cek('I10c Dilaporkan -> Selesai langsung (alur yang sudah ada) diterima', satu('SELECT status FROM laporan_insiden WHERE id = :i', ['i' => $i2['id']]) === 'Selesai', $h['pesan']);
+
+echo "\n== I21 Kondisi akhir unit saat insiden diselesaikan (insiden selesai != barang sudah diperbaiki)\n";
+minta('admin', SA, $P, ['tab' => 'insiden'], form_insiden(['perlengkapan_id' => (string) $U1['id'], 'jenis' => 'Rusak', 'kondisi' => 'Rusak', 'deskripsi' => 'UJI4C kondisi akhir satu']));
+$i21 = insiden('i.deskripsi', 'UJI4C kondisi akhir satu');
+$h = status_insiden('admin', SA, (int) $i21['id'], 'selesaikan_insiden', true, null);
+cek('I21a selesaikan tanpa kondisi akhir ditolak: status dan kondisi unit tidak berubah', str_contains($h['pesan'], 'Pilih kondisi akhir')
+    && satu('SELECT status FROM laporan_insiden WHERE id = :i', ['i' => $i21['id']]) === 'Dilaporkan' && kondisi($U1['id']) === 'Rusak', $h['pesan']);
+$h = status_insiden('admin', SA, (int) $i21['id'], 'selesaikan_insiden', true, 'Hilang');
+cek('I21b kondisi akhir di luar Baik/Maintenance/Rusak ditolak', str_contains($h['pesan'], 'Pilih kondisi akhir')
+    && satu('SELECT status FROM laporan_insiden WHERE id = :i', ['i' => $i21['id']]) === 'Dilaporkan', $h['pesan']);
+$h = status_insiden('admin', SA, (int) $i21['id'], 'selesaikan_insiden', true, 'Rusak');
+cek('I21c selesai dengan kondisi akhir Rusak: laporan Selesai, unit TETAP Rusak (tidak otomatis Baik) + riwayat', satu('SELECT status FROM laporan_insiden WHERE id = :i', ['i' => $i21['id']]) === 'Selesai'
+    && kondisi($U1['id']) === 'Rusak' && riwayat_insiden($i21['kode'] . ' selesai, kondisi akhir unit Rusak%', 'Rusak', 'Rusak') === 1
+    && str_contains($h['pesan'], 'tetap tercatat Rusak'), $h['pesan']);
+minta('admin', SA, $P, ['tab' => 'insiden'], form_insiden(['perlengkapan_id' => (string) $U1['id'], 'jenis' => 'Rusak', 'kondisi' => 'Rusak', 'deskripsi' => 'UJI4C kondisi akhir dua']));
+$i21b = insiden('i.deskripsi', 'UJI4C kondisi akhir dua');
+$h = status_insiden('admin', SA, (int) $i21b['id'], 'selesaikan_insiden', true, 'Maintenance');
+cek('I21d selesai dengan kondisi akhir Maintenance: unit Rusak -> Maintenance + riwayat', kondisi($U1['id']) === 'Maintenance'
+    && riwayat_insiden($i21b['kode'] . ' selesai, kondisi akhir unit Maintenance%', 'Rusak', 'Maintenance') === 1, $h['pesan']);
+$h = minta('admin', SA, $P, ['tab' => 'insiden']);
+preg_match('/<select id="selesai-insiden-kondisi" name="kondisi_akhir"([^>]*)>(.*?)<\/select>/s', $h['html'], $sel);
+cek('I21e dialog Selesaikan insiden: kondisi akhir wajib dipilih (placeholder kosong, TANPA bawaan Baik), pilihan Baik/Maintenance/Rusak', bersih($h)
+    && isset($sel[2]) && str_contains($sel[1], 'data-bawaan=""') && str_contains($sel[1], 'required')
+    && (bool) preg_match('/^<option value="">Pilih kondisi akhir unit<\/option><option value="Baik">.*<option value="Maintenance">.*<option value="Rusak">/s', trim($sel[2]))
+    && !str_contains($sel[2], 'selected'), $sel[1] ?? '');
+cek('I21f tombol Selesai di daftar insiden tidak mengisi kondisi akhir apa pun', !str_contains($h['html'], 'kondisi_akhir&quot;'));
+
+echo "\n== I22 Kondisi unit tidak bisa diubah manual menjadi Baik selama insiden masih terbuka\n";
+// U1 saat ini Maintenance tanpa insiden terbuka (I21). Laporkan insiden baru, lalu coba ubah kondisinya lewat form Ubah unit.
+function form_unit(int $id, array $ubah): array
+{
+    $u = semua('SELECT nama, merek, kondisi, status_aktif, catatan FROM perlengkapan WHERE id = :id', ['id' => $id])[0];
+    return $ubah + ['aksi' => 'simpan_unit', 'id' => (string) $id] + $u;
+}
+$catatan_u1 = (string) satu('SELECT catatan FROM perlengkapan WHERE id = :id', ['id' => $U1['id']]);
+minta('admin', SA, $P, ['tab' => 'insiden'], form_insiden(['perlengkapan_id' => (string) $U1['id'], 'kondisi' => 'Maintenance', 'deskripsi' => 'UJI4C kondisi manual']));
+$i22 = insiden('i.deskripsi', 'UJI4C kondisi manual');
+$riwayat_unit = (int) satu("SELECT COUNT(*) FROM riwayat_aktivitas WHERE aksi = 'Perlengkapan' AND keterangan = 'Kondisi unit diubah'");
+$h = minta('petugasB', PI, $P, [], form_unit($U1['id'], ['kondisi' => 'Baik']));
+cek('I22a Ubah unit Maintenance -> Baik ditolak selama insiden terbuka; pesan menyebut kode insidennya; kondisi & riwayat tidak berubah',
+    kondisi($U1['id']) === 'Maintenance' && str_contains($h['galat'], 'tidak bisa diubah menjadi Baik') && str_contains($h['galat'], $i22['kode'])
+    && (int) satu("SELECT COUNT(*) FROM riwayat_aktivitas WHERE aksi = 'Perlengkapan' AND keterangan = 'Kondisi unit diubah'") === $riwayat_unit, $h['galat']);
+cek('I22b form dibuka lagi pada isian yang sama (galat hanya di kondisi, isian lain tidak hilang)', ($h['form']['modal'] ?? '') === 'dialog-unit'
+    && array_keys($h['form']['galat'] ?? []) === ['kondisi'] && ($h['form']['lama']['nama'] ?? '') === semua('SELECT nama FROM perlengkapan WHERE id = :id', ['id' => $U1['id']])[0]['nama']);
+$h = minta('petugasB', PI, $P, [], form_unit($U1['id'], ['catatan' => 'UJI4C catatan saat insiden terbuka']));
+cek('I22c data lain tetap bisa disimpan saat insiden terbuka (form tidak dikunci seluruhnya)', satu('SELECT catatan FROM perlengkapan WHERE id = :id', ['id' => $U1['id']]) === 'UJI4C catatan saat insiden terbuka'
+    && kondisi($U1['id']) === 'Maintenance', $h['pesan'] . $h['galat']);
+$h = minta('petugasB', PI, $P, [], form_unit($U1['id'], ['kondisi' => 'Rusak']));
+cek('I22d kondisi ke Rusak (bukan Baik) tetap boleh saat insiden terbuka', kondisi($U1['id']) === 'Rusak', $h['pesan'] . $h['galat']);
+$h = status_insiden('admin', SA, (int) $i22['id'], 'selesaikan_insiden', true, 'Maintenance');
+$h = minta('petugasB', PI, $P, [], form_unit($U1['id'], ['kondisi' => 'Baik']));
+cek('I22e setelah semua insiden unit selesai, Ubah unit ke Baik diterima + riwayat', kondisi($U1['id']) === 'Baik'
+    && (int) satu("SELECT COUNT(*) FROM riwayat_aktivitas WHERE aksi = 'Perlengkapan' AND keterangan = 'Kondisi unit diubah' AND baru = 'Baik'") >= 1, $h['pesan'] . $h['galat']);
+// Dua insiden terbuka: menutup satu dengan kondisi akhir Baik tidak boleh membuat unit Baik.
+minta('admin', SA, $P, ['tab' => 'insiden'], form_insiden(['perlengkapan_id' => (string) $U1['id'], 'kondisi' => 'Maintenance', 'deskripsi' => 'UJI4C ganda satu']));
+minta('admin', SA, $P, ['tab' => 'insiden'], form_insiden(['perlengkapan_id' => (string) $U1['id'], 'kondisi' => 'Rusak', 'deskripsi' => 'UJI4C ganda dua']));
+$g1 = insiden('i.deskripsi', 'UJI4C ganda satu');
+$g2 = insiden('i.deskripsi', 'UJI4C ganda dua');
+$h = status_insiden('admin', SA, (int) $g1['id'], 'selesaikan_insiden', true, 'Baik');
+cek('I22f dua insiden terbuka: menutup satu dengan kondisi akhir Baik -> laporan Selesai, unit TETAP Rusak, pesan menjelaskan', satu('SELECT status FROM laporan_insiden WHERE id = :i', ['i' => $g1['id']]) === 'Selesai'
+    && kondisi($U1['id']) === 'Rusak' && str_contains($h['pesan'], 'baru bisa menjadi Baik setelah semua insidennya selesai'), $h['pesan']);
+$h = minta('petugasB', PI, $P, [], form_unit($U1['id'], ['kondisi' => 'Baik']));
+cek('I22g insiden kedua masih terbuka: Ubah unit ke Baik tetap ditolak', kondisi($U1['id']) === 'Rusak' && str_contains($h['galat'], $g2['kode']), $h['galat']);
+$h = status_insiden('admin', SA, (int) $g2['id'], 'selesaikan_insiden', true, 'Baik');
+cek('I22h insiden terakhir ditutup dengan kondisi akhir Baik -> unit Baik', kondisi($U1['id']) === 'Baik', $h['pesan']);
+// Bersamaan: "Ubah unit ke Baik" vs laporan insiden baru pada unit Maintenance tanpa insiden terbuka.
+jalankan("UPDATE perlengkapan SET kondisi = 'Maintenance' WHERE id = :id", ['id' => $U1['id']]);
+[$x, $y] = paralel(['--fungsi', 'ubah_baik', (string) $U1['id']], ['--fungsi', 'lapor', (string) $U1['id']]);
+$terbuka_u1 = (int) satu("SELECT COUNT(*) FROM laporan_insiden WHERE perlengkapan_id = :u AND status <> 'Selesai'", ['u' => $U1['id']]);
+cek('I22i bersamaan: tidak pernah berakhir "unit Baik + insiden terbuka" (laporan menang -> Maintenance; ubah menang -> laporan lalu Maintenance)',
+    ($x['status'] ?? '') !== '' && ($y['status'] ?? '') === 'ok' && $terbuka_u1 === 1 && kondisi($U1['id']) === 'Maintenance', json_encode([$x, $y, $terbuka_u1, kondisi($U1['id'])]));
+$sebelum = insiden_baru();
+$riwayat_sebelum = (int) satu('SELECT COUNT(*) FROM riwayat_aktivitas');
+$r = fungsi('lapor_baik', [$U1['id']]);
+cek('I22j pengaman terakhir ubah_kondisi_unit(): jalur yang meminta Baik saat insiden terbuka dibatalkan seluruhnya (insiden & riwayat tidak tersimpan)',
+    ($r['status'] ?? '') === 'DITOLAK_PENGAMAN' && insiden_baru() === $sebelum && kondisi($U1['id']) === 'Maintenance'
+    && (int) satu('SELECT COUNT(*) FROM riwayat_aktivitas') === $riwayat_sebelum, json_encode($r));
+jalankan('UPDATE perlengkapan SET catatan = :c WHERE id = :id', ['c' => $catatan_u1, 'id' => $U1['id']]);
 
 echo "\n== I12, I13 Hak akses dan CSRF\n";
 $sebelum = insiden_baru();

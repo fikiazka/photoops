@@ -9,7 +9,8 @@ Dokumen ini adalah bahan untuk Bab 2.3, Bab 3 (bagian basis data), Bab 4 (bagian
 | Skema 14 tabel, data contoh, role aplikasi `photoops_si3_app`, database `photoops_si3_dev` | Sudah dibuat dan diuji |
 | Uji struktur, relasi, constraint, kueri, dan pola transaksi bersamaan (di PostgreSQL) | Sudah dijalankan, hasil di Bab 4 |
 | Aplikasi PHP memakai PostgreSQL | **Seluruhnya.** Login & Pengguna (Sprint Backend 1), Kategori & Inventaris Studio (2), Proyek & Anggota Proyek (3A), Preset & Item Preset (3B), Kebutuhan & Alokasi termasuk catatan Rental (3C), Serah Terima (4A), Persiapan H-1 (4B), Laporan Insiden dan seluruh Riwayat Aktivitas (4C). PHP Session hanya untuk login, CSRF, flash, isian form sesaat, dan sandi sementara |
-| Aturan yang dijaga aplikasi (bentrok jadwal unit, barang keluar sekali, kembali tidak melebihi keluar) | **Dijaga PostgreSQL lewat PHP**: bentrok jadwal unit sejak 3C; barang keluar sekali per alokasi, satu unit fisik tidak keluar di dua proyek, dan kembali tidak melebihi keluar sejak 4A (penguncian baris, diuji termasuk request bersamaan) |
+| Aturan yang dijaga aplikasi (bentrok jadwal unit, barang keluar sekali, kembali tidak melebihi keluar) | **Dijaga PostgreSQL lewat PHP**: bentrok jadwal unit sejak 3C (termasuk saat jadwal proyek digeser atau proyek dibuka kembali, sejak Final Backend Stabilization); barang keluar sekali per alokasi, satu unit fisik tidak keluar di dua proyek, dan kembali tidak melebihi keluar sejak 4A (penguncian baris, diuji termasuk request bersamaan) |
+| Final Backend Stabilization | Jadwal proyek ↔ alokasi, aturan proyek tertutup, kondisi akhir insiden, dashboard tiga peran, runner uji `tests/jalankan_uji.php` — lihat [bagiannya](#final-backend-stabilization) |
 
 Rincian integrasi Proyek & Anggota Proyek ada di bagian [Sprint Backend 3A](#sprint-backend-3a--proyek-dan-anggota-proyek), Preset di bagian [Sprint Backend 3B](#sprint-backend-3b--preset-perlengkapan-dan-item-preset), Kebutuhan & Alokasi di bagian [Sprint Backend 3C](#sprint-backend-3c--kebutuhan-proyek-dan-alokasi-barang), Serah Terima di bagian [Sprint Backend 4A](#sprint-backend-4a--serah-terima-barang), Persiapan di bagian [Sprint Backend 4B](#sprint-backend-4b--persiapan-h-1), Insiden & Riwayat di bagian [Sprint Backend 4C](#sprint-backend-4c--insiden-riwayat-final-dan-pembersihan-session).
 
@@ -821,7 +822,7 @@ Laporan insiden (manual dan otomatis dari pengembalian) dan seluruh riwayat akti
 | Insiden otomatis | Pengembalian unit Studio berkondisi Rusak → jenis Rusak; Maintenance → jenis Masalah Teknis. Insiden menunjuk `detail_transaksi` pengembaliannya (`detail_id` UNIQUE). Kondisi Baik, Rental, dan Milik Kru tidak membuat insiden. Transaksi pengembalian, kondisi unit, insiden, dan riwayat **satu transaksi**: bila INSERT insiden gagal, pengembalian ikut ROLLBACK (diuji) |
 | Insiden ganda | Pengembalian yang sama tidak bisa tercatat dua kali (saldo dicek di dalam kunci, 4A), jadi insidennya juga tidak ganda; `detail_id` UNIQUE sebagai pengaman terakhir |
 | Status | Dilaporkan → Ditangani (hanya dari Dilaporkan); Selesai (dari Dilaporkan atau Ditangani). Transisi dicek di dalam transaksi setelah unit lalu insiden dikunci; dua perubahan bersamaan berjalan bergantian |
-| Kondisi saat Selesai | Aturan yang sudah berlaku di aplikasi (tertulis di dialog "Tandai selesai"): bila tidak ada insiden lain yang masih terbuka untuk unit itu, kondisi unit kembali Baik. Bila masih ada, kondisi **tidak** diubah dan unit tetap tidak bisa dialokasikan |
+| Kondisi saat Selesai | Aturan saat 4C: bila tidak ada insiden lain yang masih terbuka untuk unit itu, kondisi unit kembali Baik. Bila masih ada, kondisi **tidak** diubah. *Diganti di Final Backend Stabilization: petugas memilih kondisi akhir unit.* |
 | Hak akses | Lapor dan ubah status: Super Admin dan Petugas Inventaris (`insiden.kelola`); halaman Inventaris tidak untuk User/Kru. Semua POST memakai CSRF |
 | Urutan kunci | Unit → laporan insiden. Pengembalian mengunci proyek → alokasi → unit lalu hanya menambah baris insiden, jadi tidak ada siklus kunci |
 
@@ -858,7 +859,45 @@ Urutan regresi yang disarankan setelah reset: `uji_inventaris.php` lebih dulu (m
 
 ### Bug prioritas untuk Final Backend Stabilization: jadwal ulang proyek vs tanggal alokasi
 
-**Masih ada (direproduksi di database uji).** `ubah_proyek()` (`data/logic_proyek.php`) hanya mengubah baris `proyek`; `tgl_mulai`/`tgl_selesai` alokasi dihitung sekali di `tambah_alokasi()` (`data/logic_alokasi.php`, lewat `rentang_alokasi()`), dan `bentrok_unit_db()` serta `cek_unit_untuk_proyek()` membandingkan tanggal alokasi tersebut. Reproduksi: proyek A (10 Sep) memakai CAM-001 → A dijadwal ulang ke 20 Sep → alokasi A tetap 9–10 Sep → CAM-001 berhasil dialokasikan juga ke proyek B (20 Sep). Risiko: satu unit fisik dipesan dua proyek pada hari yang sama tanpa peringatan. Solusi minimal yang disarankan: di dalam transaksi `ubah_proyek()` (baris proyek sudah dikunci), bila rentang alokasi berubah, kunci unit Studio alokasi aktif proyek itu, cek `bentrok_unit_db()` terhadap rentang baru, lalu perbarui `tgl_mulai`/`tgl_selesai` alokasi yang belum keluar; tolak perubahan jadwal bila ada bentrok (atau minta alokasinya dibatalkan dulu).
+*Catatan sejarah: bug ini diperbaiki di [Final Backend Stabilization](#final-backend-stabilization).* Kondisi saat 4C: `ubah_proyek()` (`data/logic_proyek.php`) hanya mengubah baris `proyek`; `tgl_mulai`/`tgl_selesai` alokasi dihitung sekali di `tambah_alokasi()` (`data/logic_alokasi.php`, lewat `rentang_alokasi()`), dan `bentrok_unit_db()` serta `cek_unit_untuk_proyek()` membandingkan tanggal alokasi tersebut. Reproduksi: proyek A (10 Sep) memakai CAM-001 → A dijadwal ulang ke 20 Sep → alokasi A tetap 9–10 Sep → CAM-001 berhasil dialokasikan juga ke proyek B (20 Sep). Risiko: satu unit fisik dipesan dua proyek pada hari yang sama tanpa peringatan. Solusi minimal yang disarankan: di dalam transaksi `ubah_proyek()` (baris proyek sudah dikunci), bila rentang alokasi berubah, kunci unit Studio alokasi aktif proyek itu, cek `bentrok_unit_db()` terhadap rentang baru, lalu perbarui `tgl_mulai`/`tgl_selesai` alokasi yang belum keluar; tolak perubahan jadwal bila ada bentrok (atau minta alokasinya dibatalkan dulu).
+
+---
+
+## Final Backend Stabilization
+
+Skema dan hak akses tidak diubah. Semua aturan di bawah dijaga di dalam transaksi PostgreSQL dan diuji di `photoops_si3_test`.
+
+### Jadwal proyek dan alokasi
+
+| Aturan | Penerapan |
+|---|---|
+| Rentang reservasi | `rentang_alokasi()`: tanggal batas persiapan (atau mulai, mana yang lebih awal) s.d. tanggal selesai acara |
+| Jadwal digeser | `ubah_proyek()` memanggil `sinkron_jadwal_alokasi()` (`data/logic_alokasi.php`) **sebelum** proyek di-UPDATE: kunci proyek → alokasi aktif (urut id) → unit Studio (urut id, sama dengan `tambah_alokasi()`), cek `bentrok_unit_db()` terhadap rentang baru, lalu geser `tgl_mulai`/`tgl_selesai` semua alokasi aktif (Studio, Rental, Milik Kru) |
+| Bentrok | Seluruh perubahan ditolak (tidak ada yang tersimpan); pesan form menyebut unit dan proyek yang sudah memesannya |
+| Barang sudah keluar | Bila ada alokasi proyek yang sudah tercatat di serah terima, tanggal reservasi **tidak** bisa digeser (jam di tanggal yang sama dan data lain tetap bisa diubah) |
+| Riwayat | `Proyek · Jadwal acara diubah` (lama → baru) dan `Alokasi · Jadwal n alokasi disesuaikan` (rentang lama → baru), di transaksi yang sama |
+| Proyek Selesai/Dibatalkan | Hanya bisa dibuka kembali (status → Draf/Dijadwalkan/Berlangsung; PIC boleh diganti). Data lain baru bisa diubah setelah aktif. Selesai ↔ Dibatalkan ditolak |
+| Reservasi proyek tertutup | Tidak memblokir unit (`bentrok_unit_db()` dan `jadwal_unit()` hanya melihat proyek aktif). Data alokasi tidak diubah; barang yang masih keluar tetap terlihat lewat serah terima. Saat proyek dibuka kembali, bentroknya dicek ulang dan pembukaan ditolak bila unit sudah dipesan proyek lain |
+
+### Kondisi unit saat insiden diselesaikan
+
+"Insiden Selesai" menutup laporan, bukan bukti barang sudah diperbaiki. Dialog **Selesaikan insiden** mewajibkan kondisi akhir unit dipilih secara eksplisit (placeholder "Pilih kondisi akhir unit", tanpa bawaan; Baik/Maintenance/Rusak). Backend menolak permintaan tanpa kondisi akhir yang sah, termasuk request lama yang tidak mengirim field itu. Kondisi itu dipakai bila insiden tersebut adalah insiden terbuka terakhir unitnya; bila masih ada insiden lain, kondisi unit tidak diubah (tidak bisa menjadi Baik). Hanya unit Baik yang bisa dialokasikan.
+
+Selama unit masih punya insiden terbuka, kondisinya **tidak bisa diubah menjadi Baik** lewat Ubah unit: `ubah_unit()` mengunci baris unit lalu memeriksa `insiden_terbuka_unit()` (jalur tambah/tutup insiden juga mengunci baris unit lebih dulu, jadi tidak ada celah balapan). Hanya perubahan kondisi yang ditolak; data lain dan kondisi Maintenance/Rusak tetap bisa disimpan. `ubah_kondisi_unit()` (dipakai jalur insiden) menolak kondisi Baik selama ada insiden terbuka sebagai pengaman terakhir, sehingga seluruh transaksinya dibatalkan.
+
+### Dashboard tiga peran (`data/logic_dashboard.php`)
+
+| Peran | Fokus | Isi |
+|---|---|---|
+| Super Admin | Pengawasan | KPI Proyek aktif (Dijadwalkan + Berlangsung), Persiapan lewat batas, Unit Studio belum kembali (saldo serah terima), Insiden terbuka; Perlu tindakan; Kesiapan proyek 14 hari; Aktivitas terbaru; Kondisi aset |
+| Petugas Inventaris | Antrean kerja | KPI Siap diserahkan, Persiapan belum dikonfirmasi, Barang belum kembali (semua sumber), Insiden terbuka; Perlu tindakan; Kesiapan; Barang masih di proyek; Rental & unit perlu ditindak |
+| User/Kru | Proyek saya | Proyek berikutnya + kesiapan barang; Jadwal saya; Barang pribadi yang dibawa (posisi: belum diserahkan / di proyek / sudah kembali); Proyek sebelumnya |
+
+"Perlu tindakan" hanya memuat masalah yang didukung data (persiapan lewat atau < 48 jam, kekurangan alokasi, rental belum dikonfirmasi/diterima, unit dialokasikan tetapi tidak layak, unit masih di proyek lain, insiden belum ditangani), urut merah lalu kuning dan tanggal. Tidak ada peringatan "terlambat dikembalikan" dari tanggal selesai acara. Grafik Barang keluar vs kembali, utilisasi per kategori, sumber alokasi, dan frekuensi pemakaian dihapus dari dashboard; halaman Riwayat hanya berisi saringan dan daftar aktivitas (tanpa grafik).
+
+### Pengujian
+
+`php tests/jalankan_uji.php --reset` membuat ulang `photoops_si3_test` (`reset_db_uji.sql`, superuser lewat psql; lokasi psql bisa diatur dengan `PHOTOOPS_PSQL`) lalu menjalankan semua suite dengan urutan benar. Tanpa `--reset`, `uji_inventaris.php` dilewati bila database uji bukan data contoh asli; suite lain bisa dijalankan berulang. Suite baru: `uji_jadwal_proyek.php` (jadwal, bentrok, permintaan bersamaan, proyek tertutup) dan `uji_dashboard.php` (KPI dibandingkan kueri SQL independen, tautan, RBAC, status kosong).
 
 ---
 

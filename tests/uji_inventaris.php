@@ -1,8 +1,10 @@
 <?php
-// Uji Sprint Backend 2: Inventaris Studio di PostgreSQL + kompatibilitas modul PHP Session.
+// Uji Sprint Backend 2: Inventaris Studio di PostgreSQL + integrasinya dengan modul lain (semua sudah di PostgreSQL sejak 4C).
 // HANYA untuk database uji (nama berakhiran _test), karena uji ini menambah dan mengubah data:
 //   PHOTOOPS_DB_NAME=photoops_si3_test php tests/uji_inventaris.php
-// Database uji dibuat dari 001_schema.sql + 002_seed_demo.sql + 003_hak_akses.sql (data contoh masih asli).
+// Membutuhkan database uji yang BARU dibuat ulang dari 001 + 002 + 003 (data contoh asli, 23 unit): uji ini menambah 34 unit
+// dan mencatat serah terima pada data contoh, yang tidak bisa dihapus lagi oleh role aplikasi. Cara aman menjalankan ulang:
+//   php tests/jalankan_uji.php --reset      (buat ulang photoops_si3_test, lalu semua suite dengan urutan yang benar)
 //
 // Cara kerja: setiap "request" dijalankan sebagai proses PHP terpisah (mode --permintaan) yang memuat halaman asli
 // (pages/*.php) dengan $_SESSION, $_GET, $_POST tertentu. Session disimpan di folder sementara, sehingga beberapa
@@ -89,20 +91,11 @@ if (($argv[1] ?? '') === '--periksa-sesi') {
     session_id($argv[2]);
     session_start();
     $db = $_SESSION['db'] ?? [];
-    $kebutuhan = $db['kebutuhan'] ?? [];
-    $studio = [];
-    foreach ($db['alokasi'] ?? [] as $a) {
-        if ($a['sumber'] === 'Studio') {
-            $studio[] = ['alokasi' => (int) $a['id'], 'unit' => (int) $a['perlengkapan_id'], 'kategori_kebutuhan' => (int) ($kebutuhan[$a['kebutuhan_id']]['kategori_id'] ?? 0)];
-        }
-    }
     echo json_encode([
         'versi' => $_SESSION['db_versi'] ?? null,
         'ada_perlengkapan' => isset($db['perlengkapan']),
         'ada_kategori' => isset($db['kategori']),
         'alokasi_ids' => array_keys($db['alokasi'] ?? []),
-        'studio' => $studio,
-        'insiden_unit' => array_values(array_map(fn ($i) => (int) $i['perlengkapan_id'], $db['insiden'] ?? [])),
     ]);
     exit;
 }
@@ -189,7 +182,8 @@ $pdo = new PDO("pgsql:host={$k['host']};port={$k['port']};dbname={$k['dbname']}"
     PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
 ]);
 if ((int) $pdo->query("SELECT COUNT(*) FROM perlengkapan")->fetchColumn() !== 23) {
-    echo "[BERHENTI] Database uji harus berisi data contoh asli (23 unit). Buat ulang dari 001 + 002 + 003.\n";
+    echo "[BERHENTI] Database uji harus berisi data contoh asli (23 unit), kemungkinan masih berisi sisa uji sebelumnya.\n"
+        . "           Buat ulang dulu: php tests/jalankan_uji.php --reset\n";
     exit(1);
 }
 if (!is_dir(FOLDER_SESI)) {
@@ -453,29 +447,53 @@ cek('B06 unit Rusak STD-001 tampil tetapi terkunci (disabled) di alokasi kebutuh
 cek('B07 unit Rental/Milik Kru tidak masuk tabel perlengkapan',
     (int) satu("SELECT COUNT(*) FROM perlengkapan WHERE nama IN ('Sony FX3', 'Tripod Manfrotto', 'Gimbal DJI RS3', 'SD Card 128GB ×2')") === 0);
 
-// Alokasi unit baru lewat modul Session.
+// Alokasi unit baru (modul Kebutuhan & Alokasi).
 $kb = $d_kamera['id'];
 $h = minta('browserA', PI, 'pages/proyek-detail.php', ['id' => '5'], ['aksi' => 'tambah_alokasi', 'kebutuhan_id' => (string) $kb, 'sumber' => 'Studio', 'perlengkapan_id' => (string) $id_baru, 'status' => 'Dikonfirmasi', 'catatan' => '']);
-cek('B08 unit baru dari PostgreSQL bisa dialokasikan oleh modul Session', str_contains($h['pesan'], 'dialokasikan'), $h['pesan']);
+cek('B08 unit baru bisa dialokasikan di modul Alokasi', str_contains($h['pesan'], 'dialokasikan'), $h['pesan']);
 
 // Serah Terima: kembalikan CAM-003 (alokasi #8, PRJ-020) dalam kondisi Baik, lalu CAM-005 (alokasi #27, PRJ-025) Rusak.
 $h = minta('browserA', PI, 'pages/serah-terima.php', [], ['aksi' => 'checkin', 'proyek_id' => '2', 'alokasi' => ['8'], 'saldo' => ['8' => '1'], 'kondisi' => ['8' => 'Baik'], 'waktu' => '2026-11-07T00:10', 'penyerah_id' => '', 'catatan' => '', 'konfirmasi' => '1']);
-cek('B09 pengembalian Studio kondisi Baik tercatat (modul Session)', str_contains($h['pesan'], 'kembali') && empty($h['form']['galat']), $h['pesan'] . json_encode($h['form']['galat'] ?? []));
+cek('B09 pengembalian Studio kondisi Baik tercatat (modul Serah Terima)', str_contains($h['pesan'], 'kembali') && empty($h['form']['galat']), $h['pesan'] . json_encode($h['form']['galat'] ?? []));
 cek('B10 kondisi CAM-003 tetap Baik di PostgreSQL', unit_db('CAM-003')['kondisi'] === 'Baik');
 $h = minta('browserA', PI, 'pages/serah-terima.php', [], ['aksi' => 'checkin', 'proyek_id' => '7', 'alokasi' => ['27'], 'saldo' => ['27' => '1'], 'kondisi' => ['27' => 'Rusak'], 'waktu' => '2026-11-07T00:10', 'penyerah_id' => '', 'catatan' => 'Layar retak saat sesi kedua', 'konfirmasi' => '1']);
-cek('B11 pengembalian Rusak tercatat dan membuat insiden', str_contains($h['pesan'], 'INS-013'), $h['pesan'] . json_encode($h['form']['galat'] ?? []));
+// Kode insiden dari sequence (bisa melompat bila suite lain atau rollback memakai nomor), jadi dibaca dari pesan lalu dicek di database.
+$kode_ins = preg_match('/INS-\d{3,}/', $h['pesan'], $m_ins) ? $m_ins[0] : '';
+$ins_otomatis = $kode_ins !== '' ? satu('SELECT perlengkapan_id FROM laporan_insiden WHERE kode = :k AND detail_id IS NOT NULL', ['k' => $kode_ins]) : false;
+cek('B11 pengembalian Rusak tercatat dan membuat insiden otomatis untuk CAM-005', (int) $ins_otomatis === unit_db('CAM-005')['id'], $h['pesan'] . json_encode($h['form']['galat'] ?? []));
 cek('B12 kondisi CAM-005 menjadi Rusak di PostgreSQL', unit_db('CAM-005')['kondisi'] === 'Rusak');
 $h = minta('browserB', SA, $P);
 cek('B13 browser lain melihat CAM-005 Rusak (data unit bersama)', (bool) preg_match('/<strong>CAM-005<\/strong>.*?badge-merah">Rusak/s', $h['html']));
 
-// Insiden selesai -> kondisi kembali Baik di PostgreSQL.
+// Insiden selesai: petugas memilih kondisi akhir unit (Baik = sudah diperbaiki) -> kondisi Baik di PostgreSQL.
 $h = minta('browserA', PI, $P, ['tab' => 'insiden']);
-preg_match('/&quot;aksi&quot;:&quot;selesaikan_insiden&quot;,&quot;id&quot;:(\d+),&quot;_judul&quot;:&quot;Selesaikan INS-013/', $h['html'], $m);
+preg_match('/data-buka="dialog-selesai-insiden" data-isi="\{&quot;id&quot;:(\d+),&quot;_judul&quot;:&quot;Selesaikan ' . preg_quote($kode_ins, '/') . '&quot;/', $h['html'], $m);
+cek('B14a tab Insiden menampilkan tombol Selesai dengan pilihan kondisi akhir (placeholder, tanpa bawaan)', isset($m[1])
+    && str_contains($h['html'], 'name="kondisi_akhir" data-bawaan="" required') && str_contains($h['html'], '<option value="">Pilih kondisi akhir unit</option>'));
+// Form Ubah unit (simpan_unit) dengan data unit saat ini, ditimpa $ubah.
+$form_unit = function (string $kode, array $ubah): array {
+    $u = unit_db($kode);
+    return $ubah + ['aksi' => 'simpan_unit', 'id' => (string) $u['id'], 'nama' => $u['nama'], 'merek' => $u['merek'], 'kondisi' => $u['kondisi'],
+        'status_aktif' => $u['status_aktif'], 'catatan' => $u['catatan']];
+};
+$h = minta('browserA', PI, $P, [], $form_unit('CAM-005', ['kondisi' => 'Baik']));
+cek('B14b Ubah unit CAM-005 ke Baik ditolak selama insidennya masih terbuka (kondisi tetap Rusak)', unit_db('CAM-005')['kondisi'] === 'Rusak'
+    && str_contains(implode(' ', $h['form']['galat'] ?? []), $kode_ins), json_encode($h['form']['galat'] ?? []));
 $h = minta('browserA', PI, $P, [], ['aksi' => 'selesaikan_insiden', 'id' => $m[1] ?? '0']);
-cek('B14 insiden selesai mengembalikan kondisi CAM-005 menjadi Baik di PostgreSQL', unit_db('CAM-005')['kondisi'] === 'Baik', $h['pesan']);
+cek('B14c request lama tanpa kondisi_akhir ditolak backend: insiden tetap terbuka, unit tetap Rusak', str_contains($h['pesan'], 'Pilih kondisi akhir')
+    && satu("SELECT status FROM laporan_insiden WHERE kode = :k", ['k' => $kode_ins]) !== 'Selesai' && unit_db('CAM-005')['kondisi'] === 'Rusak', $h['pesan']);
+$h = minta('browserA', PI, $P, [], ['aksi' => 'selesaikan_insiden', 'id' => $m[1] ?? '0', 'kondisi_akhir' => 'Baik']);
+cek('B14 insiden selesai dengan kondisi akhir Baik mengembalikan CAM-005 menjadi Baik di PostgreSQL', unit_db('CAM-005')['kondisi'] === 'Baik', $h['pesan']);
 // Lapor insiden manual dari halaman Perlengkapan.
 $h = minta('browserA', PI, $P, [], ['aksi' => 'lapor_insiden', 'perlengkapan_id' => (string) unit_db('LGT-003')['id'], 'jenis' => 'Masalah Teknis', 'kondisi' => 'Maintenance', 'proyek_id' => '', 'deskripsi' => 'Lampu berkedip']);
 cek('B15 lapor insiden manual mengubah kondisi LGT-003 di PostgreSQL', unit_db('LGT-003')['kondisi'] === 'Maintenance', $h['pesan']);
+$h = minta('browserA', PI, $P, [], $form_unit('LGT-003', ['kondisi' => 'Baik', 'catatan' => 'Dicoba ke Baik']));
+cek('B15b Ubah unit LGT-003 ke Baik saat insiden manualnya terbuka ditolak; tidak ada perubahan lain yang ikut tersimpan', unit_db('LGT-003')['kondisi'] === 'Maintenance'
+    && unit_db('LGT-003')['catatan'] !== 'Dicoba ke Baik'
+    && str_contains($h['form']['galat']['kondisi'] ?? '', 'LGT-003 masih punya insiden terbuka (' . satu("SELECT string_agg(kode, ', ' ORDER BY id) FROM laporan_insiden WHERE perlengkapan_id = :u AND status <> 'Selesai'", ['u' => unit_db('LGT-003')['id']])),
+    json_encode($h['form']['galat'] ?? []));
+$h = minta('browserA', PI, $P, [], $form_unit('LGT-003', ['catatan' => 'Menunggu servis']));
+cek('B15c perubahan data lain LGT-003 (kondisi tetap Maintenance) tetap tersimpan', unit_db('LGT-003')['catatan'] === 'Menunggu servis' && unit_db('LGT-003')['kondisi'] === 'Maintenance', $h['pesan']);
 
 // Persiapan: konfirmasi PRJ-022 (semua unit Studio), lalu ubah kondisi unit di Inventaris -> konfirmasi dicabut otomatis.
 $h = minta('browserA', PI, 'pages/proyek-detail.php', ['id' => '4'], ['aksi' => 'simpan_persiapan', 'diperiksa' => ['20', '21', '22', '23', '24']]);
@@ -491,9 +509,15 @@ echo "\n== D. Riwayat Aktivitas\n";
 $r = json_decode(fungsi(['riwayat']), true);
 $db_perlengkapan = (int) satu("SELECT COUNT(*) FROM riwayat_aktivitas WHERE aksi = 'Perlengkapan'");
 cek('D01 riwayat Perlengkapan di halaman Riwayat = jumlah baris di PostgreSQL (tidak ganda)', ($r['Perlengkapan'] ?? 0) === $db_perlengkapan, ($r['Perlengkapan'] ?? 0) . ' vs ' . $db_perlengkapan);
-// Log session (seed) berisi 5 "Barang Keluar"; tabel riwayat_aktivitas berisi 6 (5 yang sama + 1 data dummy).
-// Bila baris database ikut digabung, jumlahnya menjadi 11. Yang benar: hanya 5 dari session.
-cek('D02 riwayat contoh (Barang Keluar dll.) dari PostgreSQL tidak ikut tampil ganda', ($r['Barang Keluar'] ?? 0) === 5, json_encode($r));
+// Sejak 4C halaman Riwayat hanya membaca riwayat_aktivitas (tidak ada log session yang digabung). Setiap aksi di halaman harus
+// sama persis dengan jumlah barisnya di PostgreSQL; bila ada sumber lain yang ikut digabung, jumlahnya menjadi lebih besar.
+$db_per_aksi = [];
+foreach ($pdo->query('SELECT aksi, COUNT(*) AS n FROM riwayat_aktivitas GROUP BY aksi') as $baris) {
+    $db_per_aksi[$baris['aksi']] = (int) $baris['n'];
+}
+ksort($db_per_aksi);
+ksort($r);
+cek('D02 setiap aksi di halaman Riwayat = jumlah barisnya di PostgreSQL (data contoh tidak tampil ganda)', $r === $db_per_aksi && ($r['Barang Keluar'] ?? 0) >= 6, json_encode($r) . ' vs ' . json_encode($db_per_aksi));
 $h = minta('browserA', PI, 'pages/riwayat.php');
 cek('D03 halaman Riwayat menampilkan aktivitas Perlengkapan', bersih($h) && str_contains($h['html'], 'Kondisi unit diubah'));
 $sesi_perlengkapan = 0;
@@ -522,24 +546,19 @@ cek('E05 tanda inventaris_berubah dihapus sehingga sinkron persiapan tidak berja
 fungsi_lepas(['--sesi-lama', 'sesiLama']);
 $h = minta('sesiLama', PI, 'pages/proyek-detail.php', ['id' => '4', 'tab' => 'kebutuhan']);
 $s = json_decode(fungsi_lepas(['--periksa-sesi', 'sesiLama']), true);
-cek('E06 session lama (VERSI_DATA 2) diganti seed baru (versi terbaru)', ($s['versi'] ?? 0) >= 3 && bersih($h));
+// Sejak 4C bootstrap membuang $_SESSION['db'] dan 'db_versi' seluruhnya (tidak ada lagi seed session versi baru).
+cek('E06 session lama (VERSI_DATA 2) dibuang seluruhnya: tidak ada db_versi/db lagi, halaman tetap tampil', ($s['versi'] ?? null) === null && !$s['alokasi_ids'] && bersih($h));
 cek('E07 salinan kategori/perlengkapan session lama dibuang', !$s['ada_perlengkapan'] && !$s['ada_kategori']);
 cek('E08 alokasi session lama yang merujuk unit buatan session (#99 -> unit 24) ikut hilang', !in_array(99, $s['alokasi_ids'], true));
 cek('E09 kondisi unit dari session lama (CAM-001 Rusak) tidak menimpa PostgreSQL', unit_db('CAM-001')['kondisi'] === 'Baik' && !str_contains($h['html'], 'versi session'));
-$tidak_ada = [];
-$beda_kategori = [];
-foreach ($s['studio'] as $baris) {
-    $kat = satu('SELECT kategori_id FROM perlengkapan WHERE id = :id', ['id' => $baris['unit']]);
-    if ($kat === false) {
-        $tidak_ada[] = $baris['alokasi'] . '->' . $baris['unit'];
-    } elseif ((int) $kat !== $baris['kategori_kebutuhan']) {
-        $beda_kategori[] = $baris['alokasi'] . '->' . $baris['unit'];
-    }
-}
-cek('E10 setiap alokasi Studio di seed session (' . count($s['studio']) . ') merujuk unit yang ada di PostgreSQL', !$tidak_ada, implode(', ', $tidak_ada));
-cek('E11 kategori unit PostgreSQL cocok dengan kategori kebutuhan di session', !$beda_kategori, implode(', ', $beda_kategori));
-$ins_hilang = array_filter($s['insiden_unit'], fn ($u) => satu('SELECT 1 FROM perlengkapan WHERE id = :id', ['id' => $u]) === false);
-cek('E12 setiap insiden di seed session merujuk unit yang ada di PostgreSQL', !$ins_hilang);
+// Maksud E10–E12 lama (alokasi dan insiden merujuk unit yang sah, kategorinya cocok) kini diperiksa pada data PostgreSQL.
+cek('E10 setiap alokasi Studio di PostgreSQL merujuk unit yang ada',
+    (int) satu("SELECT COUNT(*) FROM alokasi_barang a LEFT JOIN perlengkapan p ON p.id = a.perlengkapan_id WHERE a.sumber = 'Studio' AND p.id IS NULL") === 0);
+cek('E11 kategori unit setiap alokasi Studio cocok dengan kategori kebutuhannya',
+    (int) satu("SELECT COUNT(*) FROM alokasi_barang a JOIN kebutuhan_proyek k ON k.id = a.kebutuhan_id JOIN perlengkapan p ON p.id = a.perlengkapan_id
+                WHERE a.sumber = 'Studio' AND p.kategori_id <> k.kategori_id") === 0);
+cek('E12 setiap insiden merujuk unit yang ada di PostgreSQL',
+    (int) satu('SELECT COUNT(*) FROM laporan_insiden i LEFT JOIN perlengkapan p ON p.id = i.perlengkapan_id WHERE p.id IS NULL') === 0);
 
 echo PHP_EOL . ($gagal ? "GAGAL: $gagal" : 'OK') . " ($lulus lulus, $gagal gagal)" . PHP_EOL;
 exit($gagal ? 1 : 0);

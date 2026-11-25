@@ -21,7 +21,7 @@ if (is_post()) {
     if ($aksi === 'hapus_proyek') {
         wajib_boleh('proyek.kelola');
         if (!HAPUS_PROYEK_TERSEDIA) {
-            flash('error', 'Proyek ' . $proyek['kode'] . ' tidak dihapus: data turunannya (kebutuhan, alokasi, persiapan, serah terima) belum dapat diverifikasi menyeluruh. Ubah statusnya menjadi Dibatalkan.');
+            flash('error', 'Proyek ' . $proyek['kode'] . ' tidak dihapus: proyek dipertahankan agar riwayat, alokasi, dan serah terimanya tetap utuh. Ubah statusnya menjadi Dibatalkan.');
         }
         muat_ulang();
     }
@@ -475,14 +475,14 @@ require ROOT . '/includes/layout_head.php';
 <?php if (boleh('proyek.kelola')): ?>
 <div class="kepala-aksi">
 <?= tombol_modal('dialog-proyek', 'Ubah proyek', data_form_proyek($proyek), 'pencil', 'btn btn-sekunder') ?>
-<?= tombol_konfirmasi(['label' => 'Hapus', 'ikon' => 'trash-2', 'aksi' => 'hapus_proyek', 'id' => $pid, 'judul' => 'Hapus proyek ' . $proyek['kode'] . '?', 'pesan' => 'Selama data kebutuhan, alokasi, dan persiapan proyek masih tersimpan per browser, proyek tidak dihapus permanen. Proyek yang tidak jadi dilaksanakan sebaiknya diubah statusnya menjadi Dibatalkan.', 'tombol' => 'Hapus proyek', 'kelas' => 'btn btn-sekunder']) ?>
+<?= tombol_konfirmasi(['label' => 'Hapus', 'ikon' => 'trash-2', 'aksi' => 'hapus_proyek', 'id' => $pid, 'judul' => 'Hapus proyek ' . $proyek['kode'] . '?', 'pesan' => 'Proyek tidak dihapus permanen agar riwayat, alokasi, dan serah terimanya tetap utuh. Proyek yang tidak jadi dilaksanakan sebaiknya diubah statusnya menjadi Dibatalkan.', 'tombol' => 'Hapus proyek', 'kelas' => 'btn btn-sekunder']) ?>
 </div>
 <?php endif; ?>
 </div>
 </div>
 
 <?php if (!$bisa_ubah): ?>
-<div class="pemberitahuan pemberitahuan-info" role="status"><?= ikon('info') ?><span>Proyek berstatus <?= e($proyek['status']) ?>. Kebutuhan dan alokasi hanya bisa dilihat.</span></div>
+<div class="pemberitahuan pemberitahuan-info" role="status"><?= ikon('info') ?><span>Proyek berstatus <?= e($proyek['status']) ?>. Data proyek, tim, kebutuhan, dan alokasi hanya bisa dilihat.<?= boleh('proyek.kelola') ? ' Untuk membuka kembali, ubah statusnya lewat Ubah proyek; reservasi unit Studio akan dicek ulang.' : '' ?></span></div>
 <?php endif; ?>
 
 <?= tab_bar($tab_daftar, $tab, $dasar) ?>

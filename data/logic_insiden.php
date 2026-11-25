@@ -42,11 +42,6 @@ function semua_insiden(bool $muat_ulang = false): array
     return $daftar;
 }
 
-function cari_insiden($id): ?array
-{
-    return semua_insiden()[(int) $id] ?? null;
-}
-
 function daftar_insiden(): array
 {
     $baris = array_values(semua_insiden());
@@ -107,10 +102,15 @@ function catat_insiden_manual(int $unit_id, ?int $proyek_id, string $jenis, stri
 // Ubah status insiden ($aksi = tangani | selesaikan) beserta kondisi unit dan riwayatnya dalam SATU transaksi.
 // Baris unit lalu baris insiden dikunci, sehingga dua perubahan bersamaan berjalan bergantian dan yang kedua melihat
 // status terbaru (misalnya "tangani" kedua ditolak karena insiden sudah Ditangani).
-// Hasil: ['status' => ok | tidak_ada | transisi_tidak_sah, 'insiden' => ..., 'unit' => ..., 'masih_terbuka' => n, 'kondisi_baru' => ...].
-function ubah_status_insiden(int $id, string $aksi): array
+// "Selesai" menutup laporan, bukan bukti barang sudah diperbaiki: petugas memilih $kondisi_akhir (Baik/Maintenance/Rusak).
+// Kondisi itu dipakai bila ini insiden terbuka terakhir unit tersebut; bila masih ada insiden lain, kondisi unit tidak diubah.
+// Hasil: ['status' => ok | tidak_ada | transisi_tidak_sah | kondisi_tidak_sah, 'insiden' => ..., 'unit' => ..., 'masih_terbuka' => n, 'kondisi_baru' => ...].
+function ubah_status_insiden(int $id, string $aksi, string $kondisi_akhir = ''): array
 {
-    $hasil = transaksi_inventaris(function () use ($id, $aksi) {
+    if ($aksi === 'selesaikan' && !in_array($kondisi_akhir, daftar_kondisi(), true)) {
+        return ['status' => 'kondisi_tidak_sah'];
+    }
+    $hasil = transaksi_inventaris(function () use ($id, $aksi, $kondisi_akhir) {
         $awal = sql_satu('SELECT perlengkapan_id FROM laporan_insiden WHERE id = :id', ['id' => $id]);
         if (!$awal) {
             return ['status' => 'tidak_ada'];
@@ -129,12 +129,16 @@ function ubah_status_insiden(int $id, string $aksi): array
         $masih = (int) sql_satu("SELECT COUNT(*) AS n FROM laporan_insiden WHERE perlengkapan_id = :u AND id <> :id AND status <> 'Selesai'",
             ['u' => $unit['id'], 'id' => $id])['n'];
         sql_jalankan("UPDATE laporan_insiden SET status = 'Selesai' WHERE id = :id", ['id' => $id]);
-        $kondisi_baru = $masih ? $unit['kondisi'] : 'Baik';
+        $kondisi_baru = $masih ? $unit['kondisi'] : $kondisi_akhir;
         if ($kondisi_baru !== $unit['kondisi']) {
             ubah_kondisi_unit((int) $unit['id'], $kondisi_baru);
         }
-        catat_riwayat_proyek('Insiden', label_unit($unit), $ins['kode'] . ' selesai' . ($masih ? ', unit masih punya ' . $masih . ' insiden terbuka' : ', unit kembali layak pakai'),
-            $unit['kondisi'], $kondisi_baru);
+        if ($masih) {
+            $ket = ', unit masih punya ' . $masih . ' insiden terbuka';
+        } else {
+            $ket = $kondisi_baru === 'Baik' ? ', unit kembali layak pakai' : ', kondisi akhir unit ' . $kondisi_baru . ' (belum layak pakai)';
+        }
+        catat_riwayat_proyek('Insiden', label_unit($unit), $ins['kode'] . ' selesai' . $ket, $unit['kondisi'], $kondisi_baru);
         return ['status' => 'ok', 'insiden' => $ins, 'unit' => $unit, 'masih_terbuka' => $masih, 'kondisi_baru' => $kondisi_baru];
     });
     if ($hasil['status'] === 'ok') {

@@ -19,10 +19,9 @@ function proyek_aktif(array $proyek): bool
 // ---------------------------------------------------------------------------------------------
 // Proyek dan anggota proyek di PostgreSQL (tabel proyek, anggota_proyek, persiapan_proyek).
 //   - PIC disimpan di proyek.pic_id; anggota_proyek hanya berisi kru (PIC tidak dicatat di sana).
-//   - Modul yang masih memakai PHP Session (persiapan, insiden) tetap menyimpan proyek_id dan membaca
-//     proyek lewat semua_proyek() / cari_proyek(). Kebutuhan dan alokasi di PostgreSQL sejak Sprint 3C (data/logic_alokasi.php).
-//   - Waktu dibaca dengan TO_CHAR berformat 'YYYY-MM-DD HH24:MI' agar sama dengan format data session
-//     (dipakai tgl(), waktu_input(), substr(..., 0, 10), dan perbandingan dengan sekarang()).
+//   - Modul lain membaca proyek lewat semua_proyek() / cari_proyek(); kebutuhan dan alokasi ada di data/logic_alokasi.php.
+//   - Waktu dibaca dengan TO_CHAR berformat 'YYYY-MM-DD HH24:MI' (dipakai tgl(), waktu_input(), substr(..., 0, 10),
+//     dan perbandingan dengan sekarang()).
 // ---------------------------------------------------------------------------------------------
 
 const KOLOM_PROYEK = "id, kode, nama, klien, lokasi,
@@ -206,9 +205,13 @@ function buat_proyek(array $isi, int $pembuat_id): ?array
     return $hasil;
 }
 
-// Ubah proyek. SELECT ... FOR UPDATE mengunci baris proyek sehingga perubahan tim dan PIC pada proyek yang sama berjalan
-// bergantian. Bila PIC diganti: PIC lama menjadi kru, baris kru milik PIC baru dihapus (PIC tidak dicatat ganda).
-// Hasil: ['status' => ok | tidak_ada | pic_tidak_sah, 'lama' => data proyek sebelum diubah].
+// Ubah proyek. SELECT ... FOR UPDATE mengunci baris proyek sehingga perubahan tim, PIC, kebutuhan, dan alokasi pada proyek
+// yang sama berjalan bergantian. Bila PIC diganti: PIC lama menjadi kru, baris kru milik PIC baru dihapus (PIC tidak dicatat ganda).
+// Bila jadwal berubah, rentang alokasi aktif ikut digeser dan dicek bentrok dalam transaksi yang sama (sinkron_jadwal_alokasi);
+// bila ditolak, tidak ada yang disimpan.
+// Proyek Selesai/Dibatalkan hanya bisa dibuka kembali (status -> aktif, PIC boleh diganti bila PIC lama tidak aktif lagi);
+// data lain baru bisa diubah sesudah proyek aktif. Saat dibuka kembali, unit Studio-nya dicek bentrok ulang.
+// Hasil: ['status' => ok | tidak_ada | pic_tidak_sah | proyek_tutup | jadwal_terkunci | bentrok, 'lama' => data proyek sebelum diubah, 'jadwal' => ...].
 function ubah_proyek(int $id, array $isi): array
 {
     $hasil = sql_transaksi(function () use ($id, $isi) {
@@ -217,9 +220,19 @@ function ubah_proyek(int $id, array $isi): array
             return ['status' => 'tidak_ada', 'lama' => null];
         }
         $lama = proyek_dari_baris($lama);
+        if (!proyek_aktif($lama)) {
+            $berubah = array_filter(['nama', 'klien', 'lokasi', 'mulai', 'selesai', 'deadline_persiapan', 'catatan'], fn ($k) => (string) $lama[$k] !== (string) $isi[$k]);
+            if (!proyek_aktif($isi) || $berubah) {
+                return ['status' => 'proyek_tutup', 'lama' => $lama];
+            }
+        }
         $pic_baru = kunci_pengguna_kru($isi['pic_id']);
         if ($pic_baru === null) {
             return ['status' => 'pic_tidak_sah', 'lama' => $lama];
+        }
+        $jadwal = sinkron_jadwal_alokasi($id, $lama, $isi);
+        if ($jadwal['status'] !== 'ok') {
+            return ['status' => $jadwal['status'], 'lama' => $lama, 'jadwal' => $jadwal];
         }
         sql_jalankan('UPDATE proyek
                       SET nama = :nama, klien = :klien, lokasi = :lokasi, mulai = :mulai, selesai = :selesai,
@@ -240,10 +253,20 @@ function ubah_proyek(int $id, array $isi): array
             // tetap dinilai terhadap deadline yang berlaku saat itu (lihat deadline_saat_konfirmasi()).
             catat_riwayat_proyek('Proyek', $label, 'Deadline persiapan diubah', $lama['deadline_persiapan'], $isi['deadline_persiapan']);
         }
-        return ['status' => 'ok', 'lama' => $lama];
+        if ($lama['mulai'] !== $isi['mulai'] || $lama['selesai'] !== $isi['selesai']) {
+            catat_riwayat_proyek('Proyek', $label, 'Jadwal acara diubah', $lama['mulai'] . ' s.d. ' . $lama['selesai'], $isi['mulai'] . ' s.d. ' . $isi['selesai']);
+        }
+        if ($jadwal['jumlah'] > 0) {
+            catat_riwayat_proyek('Alokasi', $lama['kode'], 'Jadwal ' . $jadwal['jumlah'] . ' alokasi disesuaikan dengan jadwal proyek',
+                implode(' s.d. ', $jadwal['rentang_lama']), implode(' s.d. ', $jadwal['rentang_baru']));
+        }
+        return ['status' => 'ok', 'lama' => $lama, 'jadwal' => $jadwal];
     });
     if ($hasil['status'] === 'ok') {
         muat_ulang_proyek();
+        if ($hasil['jadwal']['jumlah'] > 0) {
+            muat_ulang_alokasi();
+        }
     }
     return $hasil;
 }
@@ -744,6 +767,26 @@ function penilaian_persiapan(array $proyek): array
     ];
 }
 
+// Pesan form bila perubahan jadwal ditolak sinkron_jadwal_alokasi(). Rentang alokasi = tanggal batas persiapan/mulai s.d. selesai.
+function pesan_jadwal_ditolak(array $jadwal): string
+{
+    $baru = rentang_tgl(...$jadwal['rentang_baru']);
+    if ($jadwal['status'] === 'jadwal_terkunci') {
+        return 'Tanggal pemakaian barang tidak bisa digeser karena ' . $jadwal['keluar'] . ' alokasi proyek ini sudah tercatat di Serah Terima. '
+            . 'Jam pada tanggal yang sama tetap bisa diubah.';
+    }
+    $daftar = [];
+    foreach ($jadwal['bentrok'] as $b) {
+        $daftar[] = $b['kode_unit'] . ' sudah dipesan ' . (cari_proyek($b['proyek_id'])['kode'] ?? '?') . ' (' . rentang_tgl($b['tgl_mulai'], $b['tgl_selesai']) . ')';
+    }
+    if ($jadwal['dibuka']) {
+        return 'Proyek tidak bisa dibuka kembali karena reservasinya (pemakaian barang ' . $baru . ') bentrok: ' . implode('; ', $daftar)
+            . '. Selama proyek ini ditutup, unit itu sudah dipesan proyek lain.';
+    }
+    return 'Jadwal baru (pemakaian barang ' . $baru . ') bentrok: ' . implode('; ', $daftar)
+        . '. Ganti atau batalkan alokasi unit itu di tab Kebutuhan, atau pilih jadwal lain.';
+}
+
 // Validasi sebelum menyimpan; batasnya sama dengan kolom/CHECK di tabel proyek agar galat tampil di form, bukan 503.
 function validasi_proyek(array $data): array
 {
@@ -848,7 +891,17 @@ function simpan_proyek_dari_form(array $pengguna): void
             simpan_form('dialog-proyek', $data + ['id' => $id], $pesan_pic);
             muat_ulang();
         }
-        flash('sukses', 'Proyek ' . $hasil['lama']['kode'] . ' diperbarui.');
+        if ($hasil['status'] === 'proyek_tutup') {
+            simpan_form('dialog-proyek', $data + ['id' => $id], ['status' => 'Proyek ' . $hasil['lama']['kode'] . ' berstatus ' . $hasil['lama']['status']
+                . '. Proyek tertutup hanya bisa dibuka kembali: ubah Status ke Draf, Dijadwalkan, atau Berlangsung tanpa mengubah data lain. Jadwal dan data lain bisa diubah setelah proyek aktif.']);
+            muat_ulang();
+        }
+        if (in_array($hasil['status'], ['jadwal_terkunci', 'bentrok'], true)) {
+            simpan_form('dialog-proyek', $data + ['id' => $id], [($hasil['jadwal']['dibuka'] ? 'status' : 'mulai') => pesan_jadwal_ditolak($hasil['jadwal'])]);
+            muat_ulang();
+        }
+        $digeser = $hasil['jadwal']['jumlah'];
+        flash('sukses', 'Proyek ' . $hasil['lama']['kode'] . ' diperbarui.' . ($digeser > 0 ? ' Jadwal ' . $digeser . ' alokasi barang ikut disesuaikan (' . rentang_tgl(...$hasil['jadwal']['rentang_baru']) . ').' : ''));
         muat_ulang();
     }
     $baru = buat_proyek($isi, (int) $pengguna['id']);
@@ -860,9 +913,9 @@ function simpan_proyek_dari_form(array $pengguna): void
     arahkan('pages/proyek-detail.php?id=' . $baru['id']);
 }
 
-// KEBIJAKAN SEMENTARA (sistem hybrid): proyek tidak dihapus permanen. Kebutuhan, alokasi, persiapan, dan serah terima
-// masih disimpan di PHP Session per browser, sehingga keterkaitan proyek di browser lain tidak dapat diverifikasi.
-// Gunakan status Dibatalkan. Ubah ke true hanya setelah modul turunan proyek dimigrasikan ke PostgreSQL.
+// Kebijakan: proyek tidak dihapus permanen lewat aplikasi; proyek yang tidak jadi dilaksanakan diberi status Dibatalkan
+// sehingga riwayat, serah terima, dan kode proyek tetap utuh. Sejak Sprint 4C seluruh data turunan proyek ada di PostgreSQL,
+// jadi hapus proyek tanpa transaksi bisa diaktifkan (true) bila tim memutuskan; transaksi serah terima tetap dijaga FOREIGN KEY.
 const HAPUS_PROYEK_TERSEDIA = false;
 
 function proyek_mendatang(int $hari = 14): array
@@ -870,49 +923,4 @@ function proyek_mendatang(int $hari = 14): array
     $batas = date('Y-m-d', strtotime(HARI_INI . ' +' . $hari . ' days'));
     $hasil = array_filter(semua_proyek(), fn ($p) => proyek_aktif($p) && substr($p['selesai'], 0, 10) >= HARI_INI && substr($p['mulai'], 0, 10) <= $batas);
     return urutkan_proyek(array_values($hasil));
-}
-
-function masalah_operasional(): array
-{
-    $hasil = [];
-    foreach (semua_proyek() as $proyek) {
-        if (!proyek_aktif($proyek)) {
-            continue;
-        }
-        $kurang = 0;
-        foreach (kebutuhan_proyek($proyek['id']) as $kebutuhan) {
-            $p = pemenuhan_kebutuhan($kebutuhan);
-            $kurang += max(0, $p['jumlah'] - $p['terisi']);
-        }
-        if ($kurang > 0) {
-            $hasil[] = ['tingkat' => 'merah', 'ikon' => 'package', 'judul' => $kurang . ' kebutuhan belum teralokasi', 'keterangan' => $proyek['kode'] . ' · ' . $proyek['nama'] . ' · mulai ' . tgl($proyek['mulai'], 'singkat'), 'tautan' => 'pages/proyek-detail.php?id=' . $proyek['id'] . '&tab=kebutuhan'];
-        }
-        $persiapan = persiapan_proyek($proyek);
-        if ($persiapan['lewat']) {
-            $hasil[] = ['tingkat' => 'merah', 'ikon' => 'list-checks', 'judul' => 'Persiapan lewat deadline', 'keterangan' => $proyek['kode'] . ' · ' . $persiapan['selesai'] . ' dari ' . $persiapan['total'] . ' barang diperiksa, batas ' . tgl($proyek['deadline_persiapan'], 'singkat_jam'), 'tautan' => 'pages/proyek-detail.php?id=' . $proyek['id'] . '&tab=persiapan'];
-        }
-        foreach (alokasi_proyek($proyek['id'], true) as $alokasi) {
-            if ($alokasi['sumber'] === 'Rental' && $alokasi['status'] === 'Direncanakan') {
-                $hasil[] = ['tingkat' => 'kuning', 'ikon' => 'truck', 'judul' => 'Rental menunggu konfirmasi vendor', 'keterangan' => $alokasi['nama_barang'] . ' · ' . $alokasi['vendor'] . ' · ' . $proyek['kode'], 'tautan' => 'pages/proyek-detail.php?id=' . $proyek['id'] . '&tab=kebutuhan'];
-            }
-            if ($alokasi['sumber'] !== 'Studio' || sedang_keluar($alokasi) || sudah_kembali($alokasi)) {
-                continue;
-            }
-            $unit = cari_perlengkapan((int) $alokasi['perlengkapan_id']);
-            if (!$unit) {
-                continue;
-            }
-            if ($unit['kondisi'] !== 'Baik') {
-                $hasil[] = ['tingkat' => 'merah', 'ikon' => 'wrench', 'judul' => $unit['kode_unit'] . ' dialokasikan tapi kondisi ' . $unit['kondisi'], 'keterangan' => 'Dibutuhkan ' . $proyek['kode'] . ' mulai ' . tgl($alokasi['tgl_mulai'], 'singkat'), 'tautan' => 'pages/proyek-detail.php?id=' . $proyek['id'] . '&tab=kebutuhan'];
-            }
-            $keluar = alokasi_keluar_unit($unit['id']);
-            if ($keluar && (int) $keluar['proyek_id'] !== (int) $proyek['id'] && (HARI_INI > $keluar['tgl_selesai'] || $keluar['tgl_selesai'] >= $alokasi['tgl_mulai'])) {
-                $asal = cari_proyek($keluar['proyek_id']);
-                $hasil[] = ['tingkat' => 'merah', 'ikon' => 'clock', 'judul' => 'Bentrok: ' . $unit['kode_unit'] . ' belum kembali', 'keterangan' => 'Masih di ' . ($asal['kode'] ?? '?') . ', dibutuhkan ' . $proyek['kode'] . ' mulai ' . tgl($alokasi['tgl_mulai'], 'singkat'), 'tautan' => 'pages/serah-terima.php'];
-            }
-        }
-    }
-    $urutan = ['merah' => 0, 'kuning' => 1];
-    usort($hasil, fn ($a, $b) => $urutan[$a['tingkat']] <=> $urutan[$b['tingkat']]);
-    return $hasil;
 }

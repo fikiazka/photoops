@@ -32,8 +32,14 @@ if (is_post()) {
         try {
             // Perubahan unit dan catatan riwayatnya disimpan dalam satu transaksi (lihat logic_perlengkapan.php).
             if ($lama_u) {
-                if (ubah_unit($id, $isi)) {
+                $hasil = ubah_unit($id, $isi);
+                if ($hasil['status'] === 'ok') {
                     flash('sukses', $lama_u['kode_unit'] . ' diperbarui.');
+                } elseif ($hasil['status'] === 'insiden_terbuka') {
+                    // Hanya kondisi yang ditolak: form dibuka lagi dengan isian lain tetap, sehingga bisa disimpan dengan kondisi lain.
+                    simpan_form('dialog-unit', $data, ['kondisi' => 'Kondisi tidak bisa diubah menjadi Baik: ' . $lama_u['kode_unit'] . ' masih punya insiden terbuka ('
+                        . implode(', ', $hasil['insiden']) . '). Selesaikan insidennya di tab Insiden dengan kondisi akhir Baik, atau simpan perubahan lain dengan kondisi '
+                        . $lama_u['kondisi'] . '.']);
                 } else {
                     flash('error', 'Unit tidak ditemukan.');
                 }
@@ -52,14 +58,14 @@ if (is_post()) {
         muat_ulang();
     }
 
-    // KEBIJAKAN SEMENTARA (sistem hybrid): unit tidak dihapus permanen. Alokasi dan insiden masih disimpan di
-    // PHP Session per browser, jadi pemakaian unit di browser lain tidak bisa diperiksa dari server.
-    // Unit yang tidak dipakai lagi cukup dinonaktifkan; datanya tetap ada untuk riwayat.
+    // Kebijakan: unit inventaris tidak dihapus permanen lewat aplikasi; unit yang tidak dipakai lagi dinonaktifkan sehingga
+    // riwayat alokasi, serah terima, dan insidennya tetap utuh. Sejak 4C semua pemakaian unit ada di PostgreSQL (FOREIGN KEY),
+    // jadi hapus unit yang belum pernah dipakai bisa diaktifkan bila tim memutuskan.
     if ($aksi === 'hapus_unit') {
         wajib_boleh('perlengkapan.kelola');
         $unit = cari_perlengkapan((int) input('id'));
         if ($unit) {
-            flash('error', $unit['kode_unit'] . ' tidak dihapus: pemakaian unit di proyek belum dapat diverifikasi menyeluruh. Ubah statusnya menjadi Nonaktif.');
+            flash('error', $unit['kode_unit'] . ' tidak dihapus: unit inventaris dipertahankan agar riwayat pemakaiannya tetap utuh. Ubah statusnya menjadi Nonaktif.');
         }
         muat_ulang();
     }
@@ -111,16 +117,26 @@ if (is_post()) {
         wajib_boleh('insiden.kelola');
         // Status, kondisi unit, dan riwayat diubah di PostgreSQL dalam satu transaksi berkunci; transisi dicek ulang di sana
         // (insiden bisa sudah diubah dari browser lain sejak halaman dibuka).
-        $hasil = ubah_status_insiden(preg_match('/^\d{1,9}$/', input('id')) ? (int) input('id') : 0, $aksi === 'tangani_insiden' ? 'tangani' : 'selesaikan');
-        if ($hasil['status'] === 'tidak_ada') {
+        $hasil = ubah_status_insiden(preg_match('/^\d{1,9}$/', input('id')) ? (int) input('id') : 0, $aksi === 'tangani_insiden' ? 'tangani' : 'selesaikan', input('kondisi_akhir'));
+        if ($hasil['status'] === 'kondisi_tidak_sah') {
+            flash('error', 'Pilih kondisi akhir unit (Baik, Maintenance, atau Rusak) sebelum menyelesaikan insiden.');
+        } elseif ($hasil['status'] === 'tidak_ada') {
             flash('error', 'Laporan insiden tidak ditemukan.');
         } elseif ($hasil['status'] === 'transisi_tidak_sah') {
             flash('error', $hasil['insiden']['kode'] . ' sudah berstatus ' . $hasil['insiden']['status'] . ', jadi tidak bisa ' . ($aksi === 'tangani_insiden' ? 'ditandai ditangani' : 'diselesaikan') . ' lagi.');
         } elseif ($aksi === 'tangani_insiden') {
             flash('sukses', $hasil['insiden']['kode'] . ' ditandai sedang ditangani.');
         } else {
-            flash('sukses', $hasil['insiden']['kode'] . ' selesai.' . ($hasil['masih_terbuka'] ? ' ' . $hasil['unit']['kode_unit'] . ' masih punya ' . $hasil['masih_terbuka'] . ' insiden terbuka, jadi kondisinya tidak diubah.'
-                : ($hasil['unit']['kondisi'] !== 'Baik' ? ' ' . $hasil['unit']['kode_unit'] . ' kembali berkondisi Baik.' : '')));
+            $kode_unit = $hasil['unit']['kode_unit'];
+            if ($hasil['masih_terbuka']) {
+                $ket = ' ' . $kode_unit . ' masih punya ' . $hasil['masih_terbuka'] . ' insiden terbuka, jadi kondisinya tidak diubah (tetap '
+                    . $hasil['unit']['kondisi'] . '; baru bisa menjadi Baik setelah semua insidennya selesai).';
+            } elseif ($hasil['kondisi_baru'] === 'Baik') {
+                $ket = ' ' . $kode_unit . ' berkondisi Baik dan bisa dialokasikan lagi.';
+            } else {
+                $ket = ' ' . $kode_unit . ' tetap tercatat ' . $hasil['kondisi_baru'] . ' dan belum bisa dialokasikan.';
+            }
+            flash('sukses', $hasil['insiden']['kode'] . ' selesai.' . $ket);
         }
         muat_ulang();
     }
@@ -431,7 +447,7 @@ $berikut = jadwal_berikutnya($u['id']);
 <td class="kolom-aksi">
 <div class="aksi-baris">
 <?= tombol_ikon_modal('dialog-unit', 'Ubah ' . $u['kode_unit'], ['id' => $u['id'], 'kategori_id' => $u['kategori_id'], 'nama' => $u['nama'], 'merek' => $u['merek'], 'kondisi' => $u['kondisi'], 'status_aktif' => $u['status_aktif'], 'catatan' => $u['catatan'], '_judul' => 'Ubah ' . $u['kode_unit']], 'pencil') ?>
-<?= tombol_konfirmasi(['label' => 'Hapus ' . $u['kode_unit'], 'ikon' => 'trash-2', 'hanya_ikon' => true, 'aksi' => 'hapus_unit', 'id' => $u['id'], 'judul' => 'Hapus ' . $u['kode_unit'] . '?', 'pesan' => 'Selama data proyek masih tersimpan per browser, unit tidak dihapus permanen. Unit yang tidak dipakai lagi sebaiknya dinonaktifkan.', 'tombol' => 'Hapus unit']) ?>
+<?= tombol_konfirmasi(['label' => 'Hapus ' . $u['kode_unit'], 'ikon' => 'trash-2', 'hanya_ikon' => true, 'aksi' => 'hapus_unit', 'id' => $u['id'], 'judul' => 'Hapus ' . $u['kode_unit'] . '?', 'pesan' => 'Unit inventaris tidak dihapus permanen agar riwayat alokasi, serah terima, dan insidennya tetap utuh. Unit yang tidak dipakai lagi sebaiknya dinonaktifkan.', 'tombol' => 'Hapus unit']) ?>
 </div>
 </td>
 <?php endif; ?>
@@ -471,7 +487,7 @@ $berikut = jadwal_berikutnya($u['id']);
 <?= tombol_konfirmasi(['label' => 'Tangani', 'ikon' => 'wrench', 'aksi' => 'tangani_insiden', 'id' => $i['id'], 'judul' => 'Tangani ' . $i['kode'] . '?', 'pesan' => label_unit($u) . ' sedang diperbaiki atau diservis.', 'tombol' => 'Tandai ditangani', 'aman' => true]) ?>
 <?php endif; ?>
 <?php if ($i['status'] !== 'Selesai'): ?>
-<?= tombol_konfirmasi(['label' => 'Selesai', 'ikon' => 'check', 'aksi' => 'selesaikan_insiden', 'id' => $i['id'], 'judul' => 'Selesaikan ' . $i['kode'] . '?', 'pesan' => 'Jika tidak ada insiden lain yang terbuka, kondisi ' . ($u['kode_unit'] ?? 'unit') . ' kembali Baik dan bisa dialokasikan lagi.', 'tombol' => 'Tandai selesai', 'aman' => true]) ?>
+<?= tombol_modal('dialog-selesai-insiden', 'Selesai', ['id' => $i['id'], '_judul' => 'Selesaikan ' . $i['kode'], '_sub' => label_unit($u) . ' · kondisi sekarang ' . ($u['kondisi'] ?? '—')], 'check', 'btn btn-sekunder btn-kecil') ?>
 <?php endif; ?>
 </div>
 </td>

@@ -361,8 +361,10 @@ cek('T03e mengubah preset yang tidak ada tidak membuat preset baru', preset_db('
 
 echo "\n== B. Item preset\n";
 
-// T04 tambah item
+// T04 tambah item. diubah_pada tersimpan per detik: tunggu 1 detik agar pembaruannya pasti terlihat (tanpa ini T04d bisa gagal acak
+// bila preset dibuat dan itemnya ditambah pada detik yang sama).
 $sebelum = preset_db('UJI3B Satu Baru')['diubah_pada'];
+sleep(1);
 $h = minta('admin', SA, $P, ['id' => (string) $pid1], form_item($pid1, ['nama_perlengkapan' => 'Sony A7 III', 'kategori_id' => '3', 'jumlah' => '2']));
 $h = minta('admin', SA, $P, ['id' => (string) $pid1], form_item($pid1, ['nama_perlengkapan' => 'UJI3B Drone Sewaan', 'kategori_id' => '4', 'jumlah' => '1']));
 $item = item_db($pid1);
