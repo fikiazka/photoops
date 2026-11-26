@@ -1,25 +1,29 @@
 <?php
 define('ROOT', dirname(__DIR__));
-define('HARI_INI', '2026-11-07');
 
 date_default_timezone_set('Asia/Jakarta');
 
-if (session_status() !== PHP_SESSION_ACTIVE) {
-    ini_set('session.use_strict_mode', '1');
-    session_set_cookie_params(['httponly' => true, 'samesite' => 'Lax']);
-    session_name('photoops');
-    session_start();
-}
+require ROOT . '/includes/konfigurasi.php';
+terapkan_mode_error();
 
 require ROOT . '/includes/helpers.php';
 require ROOT . '/includes/koneksi.php';
+require ROOT . '/includes/sesi.php';
 require ROOT . '/includes/akses.php';
 
 foreach (glob(ROOT . '/data/logic_*.php') as $berkas_logika) {
     require $berkas_logika;
 }
 
+// Dipasang sebelum tanggal dan session: galat konfigurasi atau database (termasuk saat membaca session PostgreSQL)
+// berakhir dengan halaman 503 umum, bukan pesan teknis.
 set_exception_handler('tangani_galat_db');
+
+// Produksi: tanggal nyata; demo: PHOTOOPS_TANGGAL_DEMO; development lokal & uji: tanggal data contoh (includes/konfigurasi.php).
+define('HARI_INI', tanggal_aplikasi());
+
+// Session dimulai sesudah koneksi tersedia, karena mode produksi menyimpannya di PostgreSQL (includes/sesi.php).
+mulai_sesi();
 
 // Sejak Sprint Backend 4C semua data bisnis (termasuk insiden dan riwayat) hanya ada di PostgreSQL. Session dipakai untuk
 // login (user_id), CSRF, flash, isian form sesaat, dan sandi sementara. Salinan data prototipe dari versi lama

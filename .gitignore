@@ -1,2 +1,12 @@
 # Kredensial database lokal (salin dari config/database.example.php)
 /config/database.local.php
+
+# Pengaturan lokal Claude Code dan environment rahasia
+.claude/settings.local.json
+.env
+.env.*
+
+# Private key tidak pernah masuk repository (docker/supabase-ca.crt adalah sertifikat publik dan boleh di-commit)
+*.key
+*.p12
+*.pfx

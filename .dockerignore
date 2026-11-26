@@ -1,0 +1,19 @@
+# Konteks build hanya perlu kode aplikasi dan berkas docker/. Dockerfile juga menyalin dengan whitelist, jadi berkas di
+# bawah ini tidak akan masuk image; daftar ini lapisan kedua agar tidak pernah terkirim ke builder sama sekali
+# (SQL/seed, suite uji, riwayat Git, kredensial lokal, pengaturan editor/Claude Code).
+.git
+.gitignore
+.claude
+.vscode
+.idea
+database
+tests
+docs
+config/database.local.php
+.env
+.env.*
+**/*.md
+**/*.bak
+**/*.log
+**/*~
+.dockerignore
