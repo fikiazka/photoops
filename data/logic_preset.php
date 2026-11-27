@@ -1,4 +1,6 @@
 <?php
+defined('ROOT') || exit;
+
 // Preset Perlengkapan dan isinya (Sprint Backend 3B) di PostgreSQL: tabel preset_perlengkapan dan detail_preset.
 // Item preset merujuk ke NAMA model (teks) + kategori, bukan ke unit tertentu. Kebutuhan proyek yang diisi dari preset
 // berupa salinan (tidak ada foreign key ke preset), sehingga mengubah atau menghapus preset tidak mengubah kebutuhan proyek.

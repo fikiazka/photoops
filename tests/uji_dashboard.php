@@ -77,7 +77,15 @@ if ($pdo->query('SELECT current_database()')->fetchColumn() !== $k['dbname']) {
     echo "[BERHENTI] Koneksi bukan ke {$k['dbname']}.\n";
     exit(1);
 }
-preg_match("/define\('HARI_INI', '([0-9-]+)'\)/", (string) file_get_contents(AKAR_UJI . '/includes/bootstrap.php'), $m);
+// Tanggal aplikasi di development/uji = tanggal data contoh (includes/konfigurasi.php), kecuali PHOTOOPS_TANGGAL_DEMO diisi.
+if (getenv('PHOTOOPS_TANGGAL_DEMO') || getenv('PHOTOOPS_ENV') === 'production') {
+    echo "[BERHENTI] Jalankan uji tanpa PHOTOOPS_TANGGAL_DEMO dan bukan mode produksi (tanggal harus deterministik).\n";
+    exit(1);
+}
+if (!preg_match("/const TANGGAL_DEMO_LOKAL = '([0-9-]+)'/", (string) file_get_contents(AKAR_UJI . '/includes/konfigurasi.php'), $m)) {
+    echo "[BERHENTI] TANGGAL_DEMO_LOKAL tidak ditemukan di includes/konfigurasi.php.\n";
+    exit(1);
+}
 define('HARI', $m[1]);
 
 function satu(string $sql, array $p = [])

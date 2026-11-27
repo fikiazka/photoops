@@ -1,0 +1,13 @@
+# Berkas yang tidak boleh terunggah ke Vercel saat deploy lewat CLI dari folder lokal (deploy lewat Git hanya berisi berkas
+# yang di-commit). Build cukup memerlukan Dockerfile, docker/, vercel.json, dan kode aplikasi.
+config/database.local.php
+.env
+.env.*
+.claude
+.vscode
+.idea
+database
+tests
+docs
+**/*.log
+**/*.bak
